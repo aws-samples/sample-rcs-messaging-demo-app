@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+  RCS Signable Document Demo — single self-contained file (no build step)
+  ============================================================================
+  PURPOSE
+    Fake 3-page loan agreement with 3 initial boxes + a drawn signature,
+    delivered in an RCS webview (AWS End User Messaging). On submit the form
+    disappears and a confirmation + audit summary is shown.
+    NOTHING is sent or stored. There are no network calls, except the optional
+    Google Font below.
+
+  HOSTING
+    Upload this file to S3 as index.html (Content-Type: text/html; charset=utf-8).
+    Serve it over HTTPS (e.g. CloudFront). SHA-256 via crypto.subtle only
+    works in a secure context.
+
+  URL PARAMETERS
+    ?token=XXXX      Required when CONFIG.REQUIRE_TOKEN = true. It must be at
+                     least CONFIG.MIN_TOKEN_LENGTH chars. DEMO CHECK ONLY: any
+                     long-enough value passes. In production, validate on the
+                     server/edge (CloudFront signed URL, Lambda@Edge, or an
+                     API call) before serving the page.
+    &name=Jane%20Doe Optional. Personalizes the "Prepared for" and
+                     "Signed by" lines.
+    &initials=draw|stamp|type
+                     Optional. Overrides CONFIG.INITIAL_MODE so all three
+                     initialing styles can be demoed from the same file:
+                       draw  = finger/mouse drawn initials (like the signature)
+                       stamp = user adopts initials once, then taps to stamp
+                       type  = user types initials into each box
+
+    Example: https://<cloudfront-domain>/index.html?token=abc123xyz789&name=Jane%20Doe&initials=stamp
+
+  SECURITY-DEMO TOUCHES
+    - The token is read, masked in a "Verified recipient" badge, then removed
+      from the address bar (history.replaceState). A no-referrer policy stops
+      it leaking via the Referer header.
+    - A SHA-256 fingerprint of the document text is shown on the page and on
+      the confirmation.
+    - An audit summary is shown: timestamp, reference ID, device/browser,
+      masked token and document hash.
+
+  INTEGRATION HOOK (optional)
+    On submit, a CustomEvent "document-signed" is dispatched on window with
+    event.detail = { audit, signaturePng, initials }. Nothing listens for it by
+    default. A future version could POST it somewhere.
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light">
+<title>Loan Agreement – Signature Required</title>
+<!-- Optional script font for stamped initials; falls back to system cursive if blocked -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #1f3a5f;
+    --navy-2: #2c4f7c;
+    --accent: #0f8a6c;
+    --accent-soft: #e3f4ef;
+    --warn: #b4441c;
+    --bg: #eef1f5;
+    --paper: #ffffff;
+    --ink: #1c2330;
+    --muted: #5f6b7a;
+    --line: #d7dde5;
+    --radius: 12px;
+    --script: "Caveat", "Brush Script MT", "Segoe Script", cursive;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-text-size-adjust: 100%;
+    line-height: 1.5;
+  }
+  [hidden] { display: none !important; }
+
+  /* ---------- Top bar ---------- */
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--navy); color: #fff;
+    padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .brand { font-weight: 700; font-size: 15px; letter-spacing: .2px; }
+  .brand small { display: block; font-weight: 400; opacity: .8; font-size: 12px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 999px; padding: 4px 10px; font-size: 12px; white-space: nowrap;
+  }
+  .badge svg { width: 14px; height: 14px; }
+
+  /* ---------- Progress ---------- */
+  .progress-wrap { padding: 12px 16px 0; max-width: 760px; margin: 0 auto; }
+  .progress-label { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  .progress { height: 6px; background: var(--line); border-radius: 999px; overflow: hidden; margin-top: 6px; }
+  .progress > div { height: 100%; background: var(--accent); width: 33.3%; transition: width .25s ease; }
+
+  /* ---------- Document pages ---------- */
+  main { max-width: 760px; margin: 0 auto; padding: 12px 16px 120px; }
+  .paper {
+    position: relative; overflow: hidden;
+    background: var(--paper); border-radius: var(--radius);
+    box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 6px 20px rgba(31,58,95,.08);
+    padding: 22px 20px 20px;
+  }
+  .paper::before { /* SAMPLE watermark */
+    content: "SAMPLE"; position: absolute; top: 45%; left: 50%;
+    transform: translate(-50%,-50%) rotate(-28deg);
+    font-size: 96px; font-weight: 800; letter-spacing: 8px;
+    color: rgba(31,58,95,.05); pointer-events: none; white-space: nowrap;
+  }
+  .doc-head { border-bottom: 2px solid var(--navy); padding-bottom: 10px; margin-bottom: 14px; }
+  .doc-head h1 { font-size: 19px; margin: 0; color: var(--navy); }
+  .doc-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .doc-text h2 { font-size: 15px; color: var(--navy); margin: 18px 0 6px; }
+  .doc-text p { font-size: 14px; margin: 0 0 10px; text-align: justify; hyphens: auto; }
+  .terms { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0 14px; }
+  .terms td { padding: 7px 8px; border-bottom: 1px solid var(--line); }
+  .terms td:last-child { text-align: right; font-weight: 600; }
+  .page-foot { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 14px; padding-top: 8px; border-top: 1px dashed var(--line); gap: 8px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* ---------- Initial fields ---------- */
+  .initial-field {
+    margin-top: 16px; padding: 12px; border: 2px dashed #f0b35a; background: #fffaf0;
+    border-radius: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  }
+  .initial-field.done { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+  .initial-label { flex: 1 1 100%; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .initial-field.done .initial-label::after { content: "✓ Initialed"; color: var(--accent); font-weight: 700; margin-left: auto; }
+  .initial-pad-wrap { width: 150px; height: 70px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+  .initial-input {
+    width: 110px; font-size: 26px; font-family: var(--script); text-align: center;
+    padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--navy);
+  }
+  .stamp-btn {
+    min-width: 130px; height: 56px; border: 1px solid var(--line); border-radius: 8px;
+    background: #fff; font-size: 15px; font-weight: 600; color: var(--navy); cursor: pointer;
+  }
+  .stamp-btn.stamped { font-family: var(--script); font-size: 30px; font-weight: 600; cursor: default; }
+
+  /* ---------- Signature ---------- */
+  .sig-block { margin-top: 18px; padding: 14px; border: 2px dashed #f0b35a; background: #fffaf0; border-radius: 10px; }
+  .sig-block.done { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+  .sig-title { font-size: 14px; font-weight: 700; margin-bottom: 8px; display: flex; justify-content: space-between; }
+  .sig-pad-wrap { position: relative; height: 160px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+  .sig-pad-wrap::after { /* baseline */
+    content: ""; position: absolute; left: 16px; right: 16px; bottom: 36px; border-bottom: 1px solid #c9d1db; pointer-events: none;
+  }
+  .sig-hint { position: absolute; left: 18px; bottom: 12px; font-size: 12px; color: #9aa5b3; pointer-events: none; }
+  .sig-meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .agree { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; font-size: 14px; }
+  .agree input { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--accent); flex: none; }
+
+  canvas.pad { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; border-radius: 8px; }
+
+  .link-btn { background: none; border: none; color: var(--navy-2); font-size: 13px; font-weight: 600; text-decoration: underline; padding: 6px 4px; cursor: pointer; }
+
+  /* ---------- Bottom nav ---------- */
+  .navbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    background: #fff; border-top: 1px solid var(--line);
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  }
+  .navbar-inner { max-width: 760px; margin: 0 auto; display: flex; gap: 10px; align-items: center; }
+  .nav-hint { flex: 1; font-size: 12px; color: var(--muted); }
+  .btn {
+    appearance: none; border: none; border-radius: 10px; padding: 12px 18px;
+    font-size: 15px; font-weight: 700; cursor: pointer; min-width: 96px;
+  }
+  .btn-primary { background: var(--navy); color: #fff; }
+  .btn-primary:disabled { background: #b8c2cf; cursor: not-allowed; }
+  .btn-accent { background: var(--accent); color: #fff; }
+  .btn-accent:disabled { background: #b8c2cf; cursor: not-allowed; }
+  .btn-ghost { background: #fff; color: var(--navy); border: 1px solid var(--line); }
+
+  /* ---------- Full-screen states ---------- */
+  .screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+  .card { background: #fff; border-radius: 16px; padding: 28px 22px; max-width: 460px; width: 100%; text-align: center; box-shadow: 0 6px 24px rgba(31,58,95,.12); }
+  .card h2 { margin: 12px 0 6px; font-size: 21px; color: var(--navy); }
+  .card p { margin: 0 0 14px; color: var(--muted); font-size: 15px; }
+  .icon-circle { width: 64px; height: 64px; border-radius: 50%; margin: 0 auto; display: flex; align-items: center; justify-content: center; }
+  .icon-circle svg { width: 34px; height: 34px; }
+  .icon-ok { background: var(--accent-soft); color: var(--accent); }
+  .icon-err { background: #fbe9e3; color: var(--warn); }
+  .audit { text-align: left; font-size: 12.5px; border-top: 1px solid var(--line); margin-top: 8px; padding-top: 12px; }
+  .audit h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 0 0 8px; }
+  .audit dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; }
+  .audit dt { color: var(--muted); }
+  .audit dd { margin: 0; word-break: break-all; font-weight: 600; }
+
+  /* ---------- Stamp dialog ---------- */
+  .overlay { position: fixed; inset: 0; background: rgba(15,25,40,.55); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .dialog { background: #fff; border-radius: 14px; padding: 20px; width: 100%; max-width: 360px; }
+  .dialog h3 { margin: 0 0 6px; color: var(--navy); font-size: 17px; }
+  .dialog p { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+  .dialog input { width: 100%; font-size: 18px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; text-transform: uppercase; }
+  .dialog .preview { font-family: var(--script); font-size: 38px; color: var(--navy); text-align: center; min-height: 52px; margin: 8px 0; }
+  .dialog .row { display: flex; gap: 10px; justify-content: flex-end; }
+</style>
+</head>
+<body>
+
+<!-- ===================== ERROR (invalid / missing token) ===================== -->
+<section id="errorScreen" class="screen" hidden>
+  <div class="card">
+    <div class="icon-circle icon-err">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 7v6M12 17h.01"/></svg>
+    </div>
+    <h2>This secure link isn't valid</h2>
+    <p>The link may have expired or been altered. Please reply to the message you received to request a new one.</p>
+  </div>
+</section>
+
+<!-- ===================== CONFIRMATION ===================== -->
+<section id="doneScreen" class="screen" hidden>
+  <div class="card">
+    <div class="icon-circle icon-ok">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+    </div>
+    <h2>We've received your signed document. Thanks</h2>
+    <p>You can close this window and return to your messages.</p>
+    <div class="audit">
+      <h3>Signing receipt</h3>
+      <dl id="auditList"></dl>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== SIGNING APP ===================== -->
+<div id="app" hidden>
+  <header class="topbar">
+    <div class="brand"><span id="lenderName"></span><small>Secure document delivery</small></div>
+    <span class="badge" id="verifiedBadge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
+      <span id="badgeText">Verified recipient</span>
+    </span>
+  </header>
+
+  <div class="progress-wrap">
+    <div class="progress-label"><span id="pageLabel">Page 1 of 3</span><span id="taskLabel">Initial to continue</span></div>
+    <div class="progress"><div id="progressBar"></div></div>
+  </div>
+
+  <main>
+    <!-- ---------- PAGE 1 ---------- -->
+    <section class="page" data-page="1">
+      <div class="paper">
+        <div class="doc-head">
+          <h1>Personal Installment Loan Agreement</h1>
+          <div class="doc-meta">Prepared for <strong class="signer-name"></strong> · Doc ID <span class="doc-id mono"></span></div>
+        </div>
+        <div class="doc-text">
+          <p><em>Sample document for demonstration purposes only. Not a real offer of credit.</em></p>
+          <table class="terms">
+            <tr><td>Principal amount</td><td>$24,500.00</td></tr>
+            <tr><td>Annual percentage rate</td><td>6.25%</td></tr>
+            <tr><td>Term</td><td>60 months</td></tr>
+            <tr><td>Estimated monthly payment</td><td>$476.51</td></tr>
+          </table>
+          <h2>1. Definitions of Flumbering</h2>
+          <p>Lorem ipsum borrowatum, hereinafter the "Vexilant," consents to the quarbled disbursement of funds pursuant to the glimmerous provisions set forth herein. Dolor sit amortizatus, consectetur principalis elit, sed do eiusmod tempor interestia ut labore et paymentum magna aliqua.</p>
+          <p>The "Lendicorp" shall mean the party of the first frabjous part, together with its successors, assigns, and any duly appointed snorkelwaiters. Ut enim ad minim collateralum, quis nostrud exercitation ullamco escrowis nisi ut aliquip ex ea commodo.</p>
+          <h2>2. Promise to Repayulate</h2>
+          <p>For value received, the Vexilant promises to repayulate the principal sum, together with interestia accruing at the stated rate, in consecutive monthly wobbles commencing on the first business Tuesday-adjacent day following disbursement. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum.</p>
+          <p>Payments shall be applied first to any outstanding fizzlements, then to accrued interestia, and finally to principal. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est lendorum.</p>
+        </div>
+        <div class="initial-field" data-page="1"></div>
+        <div class="page-foot"><span>Page 1 of 3</span><span>Fingerprint <span class="hash-short mono">…</span></span></div>
+      </div>
+    </section>
+
+    <!-- ---------- PAGE 2 ---------- -->
+    <section class="page" data-page="2" hidden>
+      <div class="paper">
+        <div class="doc-head">
+          <h1>Personal Installment Loan Agreement</h1>
+          <div class="doc-meta">Continued · Doc ID <span class="doc-id mono"></span></div>
+        </div>
+        <div class="doc-text">
+          <h2>3. Prepaymentation</h2>
+          <p>The Vexilant may prepaymentate all or any portion of the principal at any time without penalty, snarfage, or additional glorp. Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam.</p>
+          <h2>4. Late Wobbles and Grace Periods</h2>
+          <p>Should any monthly wobble remain unpaid for more than fifteen (15) calendar sunsets after its due date, a late fizzlement not to exceed the lesser of five percent of the wobble or the maximum permitted by applicable regulatory quibblings may be assessed. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit.</p>
+          <h2>5. Representations of the Vexilant</h2>
+          <p>The Vexilant represents and warrants that all information furnished in the application was true, complete, and free of undisclosed kerfuffles as of the date provided. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit.</p>
+          <p>The Vexilant further affirms possession of full legal capacity to enter into this Agreement, and that doing so will not breach any other contract, covenant, or pinky-swear. At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium.</p>
+          <h2>6. Electronic Communications</h2>
+          <p>The Vexilant consents to receive notices, statements, and disclosures electronically, including via rich messaging channels, and agrees that such electronic records carry the same force as parchment of equivalent heft. Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus.</p>
+        </div>
+        <div class="initial-field" data-page="2"></div>
+        <div class="page-foot"><span>Page 2 of 3</span><span>Fingerprint <span class="hash-short mono">…</span></span></div>
+      </div>
+    </section>
+
+    <!-- ---------- PAGE 3 ---------- -->
+    <section class="page" data-page="3" hidden>
+      <div class="paper">
+        <div class="doc-head">
+          <h1>Personal Installment Loan Agreement</h1>
+          <div class="doc-meta">Execution page · Doc ID <span class="doc-id mono"></span></div>
+        </div>
+        <div class="doc-text">
+          <h2>7. Default and Remedies</h2>
+          <p>Upon an Event of Kerfuffle, the Lendicorp may, after providing notice as required by applicable quibblings, declare the unpaid balance immediately due and payable. Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatibus maiores alias consequatur.</p>
+          <h2>8. Governing Glorp</h2>
+          <p>This Agreement shall be governed by and construed in accordance with the laws of the jurisdiction of the Lendicorp's principal flumbery, without regard to conflict-of-glorp principles. Nam libero tempore, cum soluta nobis est eligendi optio cumque nihil impedit.</p>
+          <h2>9. Entire Agreement</h2>
+          <p>This document, including all pages initialed by the Vexilant, constitutes the entire understanding between the parties and supersedes all prior napkin sketches, hallway conversations, and optimistic hand gestures. Quod maxime placeat facere possimus, omnis voluptas assumenda est.</p>
+        </div>
+        <div class="initial-field" data-page="3"></div>
+
+        <div class="sig-block" id="sigBlock">
+          <div class="sig-title"><span>Borrower signature</span><button type="button" class="link-btn" id="sigClear">Clear</button></div>
+          <div class="sig-pad-wrap">
+            <canvas class="pad" id="sigPad" aria-label="Signature pad. Draw your signature with your finger or mouse."></canvas>
+            <span class="sig-hint" id="sigHint">Sign above the line with your finger or mouse</span>
+          </div>
+          <div class="sig-meta"><span>Signed by: <strong class="signer-name"></strong></span><span>Date: <strong id="sigDate"></strong></span></div>
+          <label class="agree"><input type="checkbox" id="agree"> <span>I have read all 3 pages and agree to sign this document electronically.</span></label>
+        </div>
+        <div class="page-foot"><span>Page 3 of 3</span><span>Fingerprint <span class="hash-short mono">…</span></span></div>
+      </div>
+    </section>
+  </main>
+
+  <nav class="navbar">
+    <div class="navbar-inner">
+      <button type="button" class="btn btn-ghost" id="backBtn" hidden>Back</button>
+      <span class="nav-hint" id="navHint">Initial page 1 to continue</span>
+      <button type="button" class="btn btn-primary" id="nextBtn" disabled>Next</button>
+      <button type="button" class="btn btn-accent" id="submitBtn" hidden disabled>Submit</button>
+    </div>
+  </nav>
+</div>
+
+<!-- ===================== STAMP-MODE DIALOG ===================== -->
+<div class="overlay" id="stampDialog" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="stampTitle">
+    <h3 id="stampTitle">Adopt your initials</h3>
+    <p>Enter your initials once. Then tap each initial box to apply them.</p>
+    <input id="stampInput" maxlength="4" autocomplete="off" autocapitalize="characters" placeholder="e.g. JD" aria-label="Your initials">
+    <div class="preview" id="stampPreview"></div>
+    <div class="row">
+      <button type="button" class="btn btn-ghost" id="stampCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="stampOk" disabled>Adopt</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ======================= CONFIG ======================= */
+  const CONFIG = {
+    LENDER_NAME: "Harborline Lending Co.",   // fictional
+    DOC_ID: "HL-LA-2026-0925",
+    DOC_VERSION: "v1.0",
+    INITIAL_MODE: "draw",                    // "draw" | "stamp" | "type"  (URL ?initials= overrides)
+    REQUIRE_TOKEN: true,                     // set false to demo without a token
+    MIN_TOKEN_LENGTH: 8,
+    STRIP_TOKEN_FROM_URL: true,
+    DEFAULT_SIGNER: "Borrower",
+    INK: "#12295a"
+  };
+
+  /* ======================= HELPERS ======================= */
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const params = new URLSearchParams(location.search);
+
+  const token = (params.get("token") || "").trim();
+  const signerName = (params.get("name") || "").trim().slice(0, 60) || CONFIG.DEFAULT_SIGNER;
+  const modeParam = (params.get("initials") || "").toLowerCase();
+  const MODE = ["draw", "stamp", "type"].includes(modeParam) ? modeParam : CONFIG.INITIAL_MODE;
+
+  const maskToken = t => t ? "••••" + t.slice(-4) : "none";
+
+  function randomId(len = 10) {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const a = new Uint8Array(len);
+    (window.crypto || window.msCrypto).getRandomValues(a);
+    return Array.from(a, b => chars[b % chars.length]).join("");
+  }
+
+  async function sha256Hex(text) {
+    if (!(window.crypto && crypto.subtle)) return null; // needs HTTPS
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  function deviceSummary() {
+    const ua = navigator.userAgent;
+    const os = /Android/i.test(ua) ? "Android"
+      : /iPhone|iPad|iPod/i.test(ua) ? "iOS"
+      : /Windows/i.test(ua) ? "Windows"
+      : /Mac OS X/i.test(ua) ? "macOS"
+      : /Linux/i.test(ua) ? "Linux" : "Unknown OS";
+    let br = /SamsungBrowser/i.test(ua) ? "Samsung Internet"
+      : /EdgA?\//i.test(ua) ? "Edge"
+      : /Chrome\//i.test(ua) ? "Chrome"
+      : /Firefox\//i.test(ua) ? "Firefox"
+      : /Safari\//i.test(ua) ? "Safari" : "Unknown browser";
+    if (/; wv\)/.test(ua)) br += " WebView";
+    return `${br} on ${os}`;
+  }
+
+  /* ======================= DRAWING PAD ======================= */
+  // Stores strokes as normalized (0–1) coords so the ink survives resizes/rotation.
+  class Pad {
+    constructor(canvas, { lineWidth = 2.5, onChange = () => {} } = {}) {
+      this.c = canvas;
+      this.ctx = canvas.getContext("2d");
+      this.lineWidth = lineWidth;
+      this.onChange = onChange;
+      this.strokes = [];
+      this.cur = null;
+      this.w = 0; this.h = 0;
+      canvas.addEventListener("pointerdown", e => this.down(e));
+      canvas.addEventListener("pointermove", e => this.move(e));
+      ["pointerup", "pointercancel"].forEach(t => canvas.addEventListener(t, () => this.up()));
+      if ("ResizeObserver" in window) new ResizeObserver(() => this.resize()).observe(canvas);
+      window.addEventListener("resize", () => this.resize());
+      this.resize();
+    }
+    pos(e) {
+      const r = this.c.getBoundingClientRect();
+      return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+    }
+    style() {
+      const x = this.ctx;
+      x.lineWidth = this.lineWidth; x.lineCap = "round"; x.lineJoin = "round"; x.strokeStyle = CONFIG.INK;
+    }
+    down(e) {
+      e.preventDefault();
+      try { this.c.setPointerCapture(e.pointerId); } catch (_) {}
+      const p = this.pos(e);
+      this.cur = [p];
+      this.strokes.push(this.cur);
+      this.style();
+      const x = this.ctx;
+      x.beginPath(); x.moveTo(p.x * this.w, p.y * this.h); x.lineTo(p.x * this.w + 0.1, p.y * this.h); x.stroke();
+    }
+    move(e) {
+      if (!this.cur) return;
+      e.preventDefault();
+      const pts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+      const x = this.ctx;
+      this.style();
+      for (const ev of (pts.length ? pts : [e])) {
+        const p = this.pos(ev), l = this.cur[this.cur.length - 1];
+        this.cur.push(p);
+        x.beginPath(); x.moveTo(l.x * this.w, l.y * this.h); x.lineTo(p.x * this.w, p.y * this.h); x.stroke();
+      }
+    }
+    up() {
+      if (!this.cur) return;
+      this.cur = null;
+      this.onChange(this.hasInk());
+    }
+    hasInk() {
+      return this.strokes.reduce((n, s) => n + s.length, 0) >= 6;
+    }
+    resize() {
+      const r = this.c.getBoundingClientRect();
+      if (!r.width || !r.height) return; // hidden page; ResizeObserver fires when shown
+      const d = window.devicePixelRatio || 1;
+      this.c.width = Math.round(r.width * d);
+      this.c.height = Math.round(r.height * d);
+      this.ctx.setTransform(d, 0, 0, d, 0, 0);
+      this.w = r.width; this.h = r.height;
+      this.redraw();
+    }
+    redraw() {
+      const x = this.ctx;
+      x.clearRect(0, 0, this.w, this.h);
+      this.style();
+      for (const s of this.strokes) {
+        x.beginPath();
+        s.forEach((p, i) => i ? x.lineTo(p.x * this.w, p.y * this.h) : x.moveTo(p.x * this.w, p.y * this.h));
+        if (s.length === 1) x.lineTo(s[0].x * this.w + 0.1, s[0].y * this.h);
+        x.stroke();
+      }
+    }
+    clear() { this.strokes = []; this.cur = null; this.redraw(); this.onChange(false); }
+    toPng() { return this.hasInk() ? this.c.toDataURL("image/png") : null; }
+  }
+
+  /* ======================= STATE ======================= */
+  const state = {
+    page: 1,
+    initials: { 1: false, 2: false, 3: false },
+    initialValues: { 1: null, 2: null, 3: null }, // text for stamp/type modes
+    signed: false,
+    agreed: false,
+    stampInitials: null,
+    docHash: null,
+    submitted: false
+  };
+  const pads = [];
+  let sigPad;
+
+  /* ======================= STAMP DIALOG ======================= */
+  function askInitials() {
+    return new Promise(resolve => {
+      const dlg = $("#stampDialog"), inp = $("#stampInput"), ok = $("#stampOk"), prev = $("#stampPreview");
+      inp.value = ""; prev.textContent = ""; ok.disabled = true;
+      dlg.hidden = false;
+      setTimeout(() => inp.focus(), 50);
+      const onInput = () => {
+        inp.value = inp.value.toUpperCase().replace(/[^A-Z]/g, "");
+        prev.textContent = inp.value;
+        ok.disabled = inp.value.length < 2;
+      };
+      const close = val => {
+        dlg.hidden = true;
+        inp.removeEventListener("input", onInput);
+        ok.onclick = null; $("#stampCancel").onclick = null;
+        resolve(val);
+      };
+      inp.addEventListener("input", onInput);
+      ok.onclick = () => close(inp.value);
+      $("#stampCancel").onclick = () => close(null);
+    });
+  }
+
+  /* ======================= INITIAL FIELDS ======================= */
+  function setInitial(page, done, value = null) {
+    state.initials[page] = done;
+    state.initialValues[page] = done ? value : null;
+    $(`.initial-field[data-page="${page}"]`).classList.toggle("done", done);
+    updateUI();
+  }
+
+  function button(text, cls) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = cls; b.textContent = text;
+    return b;
+  }
+
+  function renderInitialField(el) {
+    const page = Number(el.dataset.page);
+    el.innerHTML = "";
+    const label = document.createElement("div");
+    label.className = "initial-label";
+    label.textContent = `Borrower initials — Page ${page}`;
+    el.append(label);
+
+    if (MODE === "draw") {
+      const wrap = document.createElement("div");
+      wrap.className = "initial-pad-wrap";
+      const cv = document.createElement("canvas");
+      cv.className = "pad";
+      cv.setAttribute("aria-label", `Draw your initials for page ${page}`);
+      wrap.append(cv);
+      const redo = button("Redo", "link-btn");
+      el.append(wrap, redo);
+      const pad = new Pad(cv, { lineWidth: 2.2, onChange: ok => setInitial(page, ok) });
+      redo.onclick = () => pad.clear();
+      pads.push(pad);
+
+    } else if (MODE === "type") {
+      const inp = document.createElement("input");
+      inp.type = "text"; inp.maxLength = 4; inp.autocomplete = "off";
+      inp.setAttribute("autocapitalize", "characters");
+      inp.className = "initial-input"; inp.placeholder = "JD";
+      inp.setAttribute("aria-label", `Type your initials for page ${page}`);
+      inp.addEventListener("input", () => {
+        inp.value = inp.value.toUpperCase().replace(/[^A-Z]/g, "");
+        setInitial(page, inp.value.length >= 2, inp.value);
+      });
+      el.append(inp);
+
+    } else { // stamp
+      const btn = button("Tap to initial", "stamp-btn");
+      btn.setAttribute("aria-label", `Apply your initials to page ${page}`);
+      const undo = button("Undo", "link-btn");
+      undo.hidden = true;
+      btn.onclick = async () => {
+        if (state.initials[page]) return;
+        if (!state.stampInitials) {
+          state.stampInitials = await askInitials();
+          if (!state.stampInitials) return;
+        }
+        btn.textContent = state.stampInitials;
+        btn.classList.add("stamped");
+        undo.hidden = false;
+        setInitial(page, true, state.stampInitials);
+      };
+      undo.onclick = () => {
+        btn.textContent = "Tap to initial";
+        btn.classList.remove("stamped");
+        undo.hidden = true;
+        setInitial(page, false);
+      };
+      el.append(btn, undo);
+    }
+  }
+
+  /* ======================= NAVIGATION / UI ======================= */
+  function allComplete() {
+    return state.initials[1] && state.initials[2] && state.initials[3] && state.signed && state.agreed;
+  }
+
+  function updateUI() {
+    const p = state.page;
+    $$(".page").forEach(s => s.hidden = Number(s.dataset.page) !== p);
+    $("#pageLabel").textContent = `Page ${p} of 3`;
+    $("#progressBar").style.width = `${(p / 3) * 100}%`;
+    $("#backBtn").hidden = p === 1;
+    $("#nextBtn").hidden = p === 3;
+    $("#submitBtn").hidden = p !== 3;
+    $("#nextBtn").disabled = !state.initials[p];
+    $("#submitBtn").disabled = !allComplete();
+
+    let hint;
+    if (p < 3) {
+      hint = state.initials[p] ? "Page initialed ✓" : `Initial page ${p} to continue`;
+    } else {
+      const missing = [];
+      if (!state.initials[3]) missing.push("initial");
+      if (!state.signed) missing.push("sign");
+      if (!state.agreed) missing.push("check the box");
+      hint = missing.length ? `To submit: ${missing.join(", ")}` : "Ready to submit";
+    }
+    $("#navHint").textContent = hint;
+    $("#taskLabel").textContent = p < 3 ? (state.initials[p] ? "Initialed ✓" : "Initial to continue") : (allComplete() ? "Ready ✓" : "Initial & sign");
+    $("#sigBlock").classList.toggle("done", state.signed);
+    $("#sigHint").hidden = state.signed;
+  }
+
+  function goTo(p) {
+    state.page = Math.min(3, Math.max(1, p));
+    updateUI();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /* ======================= SUBMIT ======================= */
+  function submit() {
+    if (!allComplete() || state.submitted) return;
+    state.submitted = true;
+
+    const now = new Date();
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+    const audit = {
+      referenceId: "SIG-" + randomId(10),
+      documentId: CONFIG.DOC_ID + " (" + CONFIG.DOC_VERSION + ")",
+      signer: signerName,
+      signedAt: now.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" }) + " (" + tz + ")",
+      signedAtIso: now.toISOString(),
+      device: deviceSummary(),
+      recipientToken: maskToken(token),
+      documentSha256: state.docHash || "unavailable (requires HTTPS)",
+      pagesInitialed: "3 of 3",
+      initialMethod: { draw: "Drawn", stamp: "Adopted & applied", type: "Typed" }[MODE]
+    };
+
+    // Optional integration hook — nothing listens by default, nothing is sent.
+    try {
+      window.dispatchEvent(new CustomEvent("document-signed", {
+        detail: {
+          audit,
+          signaturePng: sigPad.toPng(),
+          initials: MODE === "draw" ? pads.map(pd => pd.toPng()) : Object.values(state.initialValues)
+        }
+      }));
+    } catch (_) {}
+
+    // Wipe ink from memory and remove the form from the DOM.
+    pads.forEach(pd => pd.clear());
+    sigPad.clear();
+    $("#app").remove();
+    $("#stampDialog").remove();
+
+    const rows = [
+      ["Reference", audit.referenceId],
+      ["Document", audit.documentId],
+      ["Signed by", audit.signer],
+      ["Signed at", audit.signedAt],
+      ["Device", audit.device],
+      ["Recipient", "Verified · token " + audit.recipientToken],
+      ["Initials", audit.pagesInitialed + " · " + audit.initialMethod],
+      ["SHA-256", audit.documentSha256]
+    ];
+    const dl = $("#auditList");
+    rows.forEach(([k, v]) => {
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); dd.textContent = v;
+      if (k === "SHA-256" || k === "Reference") dd.classList.add("mono");
+      dl.append(dt, dd);
+    });
+    $("#doneScreen").hidden = false;
+    window.scrollTo(0, 0);
+  }
+
+  /* ======================= INIT ======================= */
+  async function init() {
+    // 1) Token gate (demo-level; real validation belongs server/edge side)
+    if (CONFIG.REQUIRE_TOKEN && token.length < CONFIG.MIN_TOKEN_LENGTH) {
+      $("#errorScreen").hidden = false;
+      return;
+    }
+    if (CONFIG.STRIP_TOKEN_FROM_URL && params.has("token")) {
+      const clean = new URLSearchParams(location.search);
+      clean.delete("token");
+      const qs = clean.toString();
+      history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+    }
+
+    // 2) Static text
+    $("#lenderName").textContent = CONFIG.LENDER_NAME;
+    $("#badgeText").textContent = token ? `Verified recipient · ${maskToken(token)}` : "Demo mode";
+    $$(".doc-id").forEach(e => e.textContent = CONFIG.DOC_ID);
+    $$(".signer-name").forEach(e => e.textContent = signerName);
+    $("#sigDate").textContent = new Date().toLocaleDateString(undefined, { dateStyle: "medium" });
+
+    // 3) Show app (before creating pads so they can measure themselves)
+    $("#app").hidden = false;
+
+    // 4) Initial fields + signature pad
+    $$(".initial-field").forEach(renderInitialField);
+    sigPad = new Pad($("#sigPad"), {
+      lineWidth: 2.6,
+      onChange: ok => { state.signed = ok; updateUI(); }
+    });
+    $("#sigClear").onclick = () => sigPad.clear();
+    $("#agree").addEventListener("change", e => { state.agreed = e.target.checked; updateUI(); });
+
+    // 5) Navigation
+    $("#nextBtn").onclick = () => { if (state.initials[state.page]) goTo(state.page + 1); };
+    $("#backBtn").onclick = () => goTo(state.page - 1);
+    $("#submitBtn").onclick = submit;
+    updateUI();
+
+    // 6) Document fingerprint (hash of all agreement text, normalized)
+    const docText = [CONFIG.DOC_ID, CONFIG.DOC_VERSION]
+      .concat($$(".doc-text").map(n => n.textContent))
+      .join("\n").replace(/\s+/g, " ").trim();
+    state.docHash = await sha256Hex(docText);
+    $$(".hash-short").forEach(e => e.textContent = state.docHash ? state.docHash.slice(0, 12) + "…" : "n/a (HTTP)");
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
+})();
+</script>
+</body>
+</html>

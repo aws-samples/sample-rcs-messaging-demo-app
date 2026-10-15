@@ -1,0 +1,16 @@
+{
+  "app": "npx ts-node --prefer-ts-exts bin/anyhealth.ts",
+  "watch": {
+    "include": ["**"],
+    "exclude": ["README.md", "cdk*.json", "**/*.d.ts", "**/*.js", "node_modules", "cdk.out"]
+  },
+  "context": {
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
+
+    "_comment": "Deploy inputs are read from ../.deploy/agent.json (written by the RCS agent setup in SETUP.md step 2, or by an AI coding assistant that follows AGENTS.md). You can override at deploy time: cdk deploy -c rcsAgentId=rcs-xxxx -c region=us-east-1",
+    "_bedrockComment": "bedrockModelId/bedrockRegion are intentionally NOT set here. A value in this block would override the defaults in lib/config.ts for every deployer, and a geography-scoped inference profile pinned here (for example us.anthropic.claude-sonnet-4-6) fails at runtime wherever bedrockRegion is not a source Region for that profile. Override per deploy instead: cdk deploy -c bedrockModelId=eu.anthropic.claude-sonnet-4-6. Unset, the defaults are global.anthropic.claude-sonnet-4-6 (resolves in every Region) and the deploy region."
+  }
+}

@@ -1,0 +1,20 @@
+# Lambda dependency layer for media_convert.py only.
+#
+# Pillow-heif ships prebuilt manylinux wheels that vendor libheif, libde265 and
+# x265 as shared libraries (pillow_heif.libs/, loaded by the extension module),
+# so this installs the same way as the main DepsLayer (plain pip, no
+# Docker-only build, no system libheif package needed) despite adding
+# HEIC/HEIF support. Kept in a separate layer from DepsLayer (boto3/PyYAML)
+# since Pillow + pillow-heif adds real size that channel_adapter/dashboard's
+# cold starts shouldn't have to carry.
+#
+# NOTE: pillow-heif's wheels only publish a manylinux_2_28 platform tag (not
+# manylinux2014, unlike DepsLayer's boto3/PyYAML) — see anyhealth-stack.ts's
+# MediaLayer bundling command. Lambda's Python 3.14 runtime (Amazon Linux
+# 2023, glibc 2.34) comfortably satisfies that floor.
+#
+# Pinned to exact, tested versions for reproducible builds. Pillow decodes
+# untrusted files (webview uploads, inbound RCS media), so check these pins
+# with `pip-audit --no-deps -r lambda/media_layer/requirements.txt`.
+Pillow==12.3.0
+pillow-heif==1.8.0

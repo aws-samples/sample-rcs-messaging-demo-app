@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{BRAND_NAME}} — Prescription Details</title>
+<style>
+  :root { --accent: {{ACCENT}}; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1a1a1a; background: #f6f8f8; }
+  header { background: var(--accent); color: #fff; padding: 20px 18px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; opacity: .85; font-size: 13px; }
+  main { padding: 18px; }
+  .card { background: #fff; border: 1px solid #e4e9e9; border-radius: 10px; padding: 16px; }
+  .row { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid #eef2f2; font-size: 15px; }
+  .row:last-child { border-bottom: 0; }
+  .row span:first-child { color: #667; }
+  .row span:last-child { font-weight: 600; }
+  .note { color: #667; font-size: 13px; margin-top: 14px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Prescription Details</h1>
+    <p>{{BRAND_NAME}} — Pharmacy</p>
+  </header>
+  <main>
+    <!--
+      SYNTHETIC SAMPLE DATA ONLY. The medication, pharmacy, copay, refill, and
+      pickup values below are fictional demo content, not real Protected Health
+      Information (PHI). Any adaptation of this pattern to handle real PHI
+      requires HIPAA controls, including a signed AWS Business Associate
+      Addendum (BAA), encryption in transit and at rest, audit logging, and
+      least-privilege access controls. See SECURITY.md and
+      https://aws.amazon.com/compliance/hipaa-compliance/ for guidance.
+    -->
+    <div class="card">
+      <div class="row"><span>Medication</span><span>Magic Medicine 10mg</span></div>
+      <div class="row"><span>Supply</span><span>30-day</span></div>
+      <div class="row"><span>Refills remaining</span><span>4</span></div>
+      <div class="row"><span>Pharmacy</span><span>Walnut St Pharmacy</span></div>
+      <div class="row"><span>Ready</span><span>Tomorrow after 10:00 AM</span></div>
+      <div class="row"><span>Copay</span><span>$10.00</span></div>
+    </div>
+    <p class="note">This detail page is a demo webview opened inside the RCS conversation. All values shown are synthetic sample data, not real PHI; handling real Protected Health Information requires HIPAA controls (see SECURITY.md).</p>
+  </main>
+</body>
+</html>

@@ -1,0 +1,61 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 2550 >>
+stream
+BT /F1 20 Tf 72 720 Td (Patient Prescription Record) Tj ET
+BT /F1 11 Tf 72 694 Td (SAMPLE DOCUMENT \055 fictitious patient, fictitious prescriber, fictitious drug.) Tj ET
+BT /F1 11 Tf 72 677 Td (Generated for an AWS End User Messaging RCS demo. Not medical advice.) Tj ET
+BT /F1 14 Tf 72 642 Td (Patient) Tj ET
+BT /F1 11 Tf 72 622 Td (Name:            Jordan A. Vasquez) Tj ET
+BT /F1 11 Tf 72 605 Td (Date of birth:   11 March 1984) Tj ET
+BT /F1 11 Tf 72 588 Td (Member ID:       AH\055PPO\05500427\0553) Tj ET
+BT /F1 11 Tf 72 571 Td (Address:         1420 Walnut Street, Apt 6C, Philadelphia, PA 19102) Tj ET
+BT /F1 11 Tf 72 554 Td (Phone:           +1 215 555 0147) Tj ET
+BT /F1 14 Tf 72 523 Td (Prescriber) Tj ET
+BT /F1 11 Tf 72 503 Td (Dr. Amara Reyes, MD \055 Walnut Street Family Medicine) Tj ET
+BT /F1 11 Tf 72 486 Td (NPI 1234567890   Direct: +1 215 555 0182) Tj ET
+BT /F1 14 Tf 72 455 Td (Prescription) Tj ET
+BT /F1 11 Tf 72 435 Td (Rx number:       8842119) Tj ET
+BT /F1 11 Tf 72 418 Td (Medication:      Magic Medicine 10 mg tablet \(30\055day supply\)) Tj ET
+BT /F1 11 Tf 72 401 Td (Directions:      Take 2 tablets by mouth daily for wonderment and awe.) Tj ET
+BT /F1 11 Tf 72 384 Td (Refills:         4 remaining, through 12 December 2026) Tj ET
+BT /F1 11 Tf 72 367 Td (Indication:      Persistent under\055appreciation of small things) Tj ET
+BT /F1 11 Tf 72 350 Td (Allergies:       Penicillin \(documented rash, 2019\)) Tj ET
+BT /F1 14 Tf 72 319 Td (Pharmacy notes) Tj ET
+BT /F1 11 Tf 72 299 Td (Counselled on taking both tablets at the same time each day. Member asked) Tj ET
+BT /F1 11 Tf 72 282 Td (about the humming; reassured it passes. Follow up at next refill.) Tj ET
+BT /F1 10 Tf 72 241 Td (Why this document is NOT sent into the message thread: every line above) Tj ET
+BT /F1 10 Tf 72 225 Td (identifies an individual. It is served only to this conversation, over HTTPS,) Tj ET
+BT /F1 10 Tf 72 209 Td (through a short\055lived presigned URL requested by the in\055conversation webview,) Tj ET
+BT /F1 10 Tf 72 193 Td (so the bytes never enter the RCS/carrier delivery chain.) Tj ET
+BT /F1 10 Tf 72 167 Td (HIPAA: this is fictitious sample data. Real Protected Health Information) Tj ET
+BT /F1 10 Tf 72 151 Td (requires HIPAA\055compliant handling \(an AWS Business Associate Addendum,) Tj ET
+BT /F1 10 Tf 72 135 Td (encryption, audit logging, access controls\) that this demo does not provide;) Tj ET
+BT /F1 10 Tf 72 119 Td (compliance is the customer's responsibility. See aws.amazon.com/compliance/hipaa\055compliance/) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000002842 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+2939
+%%EOF

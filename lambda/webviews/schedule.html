@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{BRAND_NAME}} — My Schedule</title>
+<style>
+  :root { --accent: {{ACCENT}}; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1a1a1a; background: #f6f8f8; }
+  header { background: var(--accent); color: #fff; padding: 20px 18px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; opacity: .85; font-size: 13px; }
+  main { padding: 18px; }
+  .day-label { color: #667; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin: 18px 0 8px; }
+  .day-label:first-child { margin-top: 0; }
+  .badge { display: inline-block; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+           border-radius: 8px; padding: 2px 7px; margin-left: 8px; text-transform: uppercase; }
+  .item { background: #fff; border: 1px solid #e4e9e9; border-radius: 10px; padding: 14px; margin-bottom: 10px; }
+  .item .time { font-weight: 600; font-size: 15px; }
+  .item .meta { color: #667; font-size: 13px; margin-top: 3px; }
+  .note { color: #667; font-size: 13px; margin-top: 14px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>My Schedule</h1>
+    <p>{{BRAND_NAME}} — Upcoming shifts</p>
+  </header>
+  <main>
+    <div class="day-label">This Week <span class="badge">Today: none scheduled</span></div>
+    <div class="item">
+      <div class="time">Monday, Jul 14 &nbsp;8:00 AM–4:00 PM</div>
+      <div class="meta">Front Desk — AnyHealth Chestnut St Clinic</div>
+    </div>
+    <div class="item">
+      <div class="time">Wednesday, Jul 16 &nbsp;10:00 AM–6:00 PM</div>
+      <div class="meta">Check-In — AnyHealth Chestnut St Clinic</div>
+    </div>
+    <div class="item">
+      <div class="time">Friday, Jul 18 &nbsp;8:00 AM–4:00 PM</div>
+      <div class="meta">Front Desk — AnyHealth Chestnut St Clinic</div>
+    </div>
+    <div class="item">
+      <div class="time">Saturday, Jul 19 &nbsp;9:00 AM–1:00 PM</div>
+      <div class="meta">Check-In — AnyHealth Chestnut St Clinic</div>
+    </div>
+    <p class="note">This schedule is a demo webview opened inside the RCS conversation.</p>
+  </main>
+</body>
+</html>

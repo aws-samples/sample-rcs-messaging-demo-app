@@ -1,0 +1,11 @@
+# Lambda dependency layer for AnyHealth.
+# Modern boto3/botocore provide SendRcsMessage (needs >= 1.43.37); PyYAML parses
+# the content/*.md frontmatter. This layer makes the native SDK call work, so no
+# hand-rolled SigV4 fallback is needed.
+#
+# Pinned to exact, tested versions for reproducible builds. To pick up new
+# versions deliberately, run this stack's synth, confirm the resolved versions
+# in cdk.out, and bump these pins.
+boto3==1.43.88
+botocore==1.43.88
+PyYAML==6.0.3

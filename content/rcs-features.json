@@ -1,0 +1,499 @@
+{
+  "$comment": [
+    "Source of truth for every RCS fact this project asserts: documented limits,",
+    "feature explanations, and AWS documentation links. Read by lambda/common.py",
+    "(validation limits), lambda/dashboard_handler.py (resolves vignette feature",
+    "keys for /api/vignettes), and through that API by the dashboard's tooltips.",
+    "",
+    "Edit this file rather than the prose. scripts/check-rcs-registry.py checks",
+    "that every key here is wired to the code that reads it and that nothing",
+    "hardcodes a limit. See docs/updating-rcs-content.md for the refresh procedure.",
+    "",
+    "reviewedOn is the date (YYYY-MM-DD) a person last read these limits against the AWS",
+    "user guide. Nothing updates it automatically; the Instructions tab shows it."
+  ],
+  "docBaseUrl": "https://docs.aws.amazon.com/sms-voice/latest/userguide/",
+  "reviewedOn": "2026-10-13",
+
+  "limits": {
+    "textBodyChars": {
+      "value": 3072,
+      "label": "Text body",
+      "unit": "characters",
+      "doc": "rcs-rich-messaging.html#rcs-rich-messaging-limits"
+    },
+    "richCardTitleChars": {
+      "value": 200,
+      "label": "Rich card title",
+      "unit": "characters",
+      "doc": "rcs-rich-messaging.html#rcs-rich-messaging-limits"
+    },
+    "richCardDescriptionChars": {
+      "value": 2000,
+      "label": "Rich card description",
+      "unit": "characters",
+      "doc": "rcs-rich-messaging.html#rcs-rich-messaging-limits"
+    },
+    "carouselCardsMin": {
+      "value": 2,
+      "label": "Carousel cards (minimum)",
+      "unit": "cards",
+      "doc": "rcs-rich-messaging.html#rcs-rich-messaging-limits"
+    },
+    "carouselCardsMax": {
+      "value": 10,
+      "label": "Carousel cards (maximum)",
+      "unit": "cards",
+      "doc": "rcs-rich-messaging.html#rcs-rich-messaging-limits"
+    },
+    "suggestionsPerMessage": {
+      "value": 11,
+      "label": "Suggestions per message",
+      "unit": "suggestions",
+      "doc": "rcs-suggestions.html#rcs-suggestions-limits"
+    },
+    "suggestionsPerCard": {
+      "value": 4,
+      "label": "Suggestions per card",
+      "unit": "suggestions",
+      "doc": "rcs-suggestions.html#rcs-suggestions-limits"
+    },
+    "suggestionTextChars": {
+      "value": 25,
+      "label": "Suggestion label",
+      "unit": "characters",
+      "doc": "rcs-suggestions.html#rcs-suggestions-limits"
+    },
+    "postbackDataChars": {
+      "value": 2048,
+      "label": "Postback data",
+      "unit": "characters",
+      "doc": "rcs-suggestions.html#rcs-suggestions-limits"
+    },
+    "mediaFileMb": {
+      "value": 100,
+      "label": "Media file size",
+      "unit": "MB",
+      "doc": "rcs-rich-messaging.html#rcs-rich-messaging-limits"
+    },
+    "mediaUrlChars": {
+      "value": 2000,
+      "label": "Media URL",
+      "unit": "characters",
+      "doc": "rcs-rich-messaging.html#rcs-rich-messaging-limits"
+    },
+    "ttlSecondsMax": {
+      "value": 172800,
+      "label": "Time-to-live (maximum)",
+      "unit": "seconds",
+      "doc": "rcs-rich-messaging.html#rcs-rich-messaging-limits"
+    },
+    "fallbackBodyChars": {
+      "value": 1600,
+      "label": "SMS/MMS fallback body",
+      "unit": "characters",
+      "doc": "rcs-fallback-per-message.html#rcs-fallback-per-message-structure",
+      "note": "Shorter than the 3,072-character RCS body — a long RCS message has no automatic SMS equivalent."
+    },
+    "calendarTitleChars": {
+      "value": 100,
+      "label": "Calendar event title",
+      "unit": "characters",
+      "doc": "rcs-suggestions.html#rcs-suggestions-limits"
+    },
+    "calendarDescriptionChars": {
+      "value": 500,
+      "label": "Calendar event description",
+      "unit": "characters",
+      "doc": "rcs-suggestions.html#rcs-suggestions-limits"
+    },
+    "testDevicesPerAgent": {
+      "value": 10,
+      "label": "Verified test devices per agent",
+      "unit": "devices",
+      "doc": "quotas.html",
+      "note": "Not increasable."
+    },
+    "supportedCountries": {
+      "value": 22,
+      "label": "Countries where RCS is supported",
+      "unit": "countries",
+      "doc": "rcs-supported-countries.html",
+      "note": "Number of countries listed in the table on that page; update this value when AWS launches RCS in a new country."
+    }
+  },
+
+  "features": [
+    {
+      "key": "carousel",
+      "name": "Carousel",
+      "kind": "rcs-api",
+      "blurb": "A swipeable set of cards, each with its own media, title, description and suggestions. Sent as the Carousel content type on SendRcsMessage.",
+      "gotcha": "One card is a ValidationException, not a one-card carousel — and so is an eleventh. The message never leaves your account, and a device preview will render it happily.",
+      "limitRefs": ["carouselCardsMin", "carouselCardsMax", "suggestionsPerCard"],
+      "doc": "rcs-carousels.html",
+      "status": "demonstrated"
+    },
+    {
+      "key": "rich_card",
+      "name": "Rich card",
+      "kind": "rcs-api",
+      "blurb": "A single structured card: media, title, description, and up to four suggestions that stay attached to it in the thread.",
+      "limitRefs": ["richCardTitleChars", "richCardDescriptionChars", "suggestionsPerCard", "mediaFileMb"],
+      "doc": "rcs-rich-cards.html",
+      "status": "demonstrated"
+    },
+    {
+      "key": "text_message",
+      "name": "Text message",
+      "kind": "rcs-api",
+      "blurb": "An RCS text body. Unlike SMS it is delivered as one message rather than split into 160-character segments, and it can carry suggestions.",
+      "limitRefs": ["textBodyChars", "suggestionsPerMessage"],
+      "doc": "rcs-text-messages.html",
+      "status": "demonstrated",
+      "surfaces": [
+        {"where": "Every flow, wherever a card would be overkill",
+         "file": "lambda/flows/appointment.py", "evidence": "\"TextMessage\""}
+      ]
+    },
+    {
+      "key": "file_message",
+      "name": "File message",
+      "kind": "rcs-api",
+      "blurb": "A standalone image, video, audio file or PDF, referenced by HTTPS or S3 URL — no card wrapper.",
+      "gotcha": "It carries no title, description or caption, so any explanation has to be a separate message. And Content is a tagged union: a file message cannot also be a card. AWS downloads the file from your bucket, rehosts it and presigns it for the aggregator, so the bucket needs no public access.",
+      "limitRefs": ["mediaFileMb", "mediaUrlChars"],
+      "doc": "rcs-file-messages.html",
+      "status": "demonstrated"
+    },
+    {
+      "key": "suggested_replies",
+      "name": "Suggested replies",
+      "kind": "rcs-api",
+      "blurb": "Reply chips. The label appears in the thread as if the member typed it; your PostbackData is what reaches your code. Route on the postback, never the display text.",
+      "limitRefs": ["suggestionTextChars", "postbackDataChars", "suggestionsPerMessage", "suggestionsPerCard"],
+      "doc": "rcs-suggestions.html#rcs-suggestions-reply",
+      "status": "demonstrated"
+    },
+    {
+      "key": "suggested_actions",
+      "name": "Suggested actions",
+      "kind": "rcs-api",
+      "blurb": "The five non-reply suggestion types: OpenUrl, DialPhone, ShowLocation, RequestLocation and CreateCalendarEvent. Each hands the member a native device action rather than a conversation turn.",
+      "limitRefs": ["suggestionTextChars", "postbackDataChars"],
+      "doc": "rcs-suggestions.html",
+      "status": "demonstrated"
+    },
+    {
+      "key": "webview",
+      "name": "Webview",
+      "kind": "rcs-api",
+      "blurb": "An OpenUrl suggestion with Application set to WEBVIEW opens a modal browser on top of the conversation instead of throwing the member out to their default browser. AWS positions it for \"sessions and content that should not be transmitted over messaging channels, like account details\".",
+      "gotcha": "The Url must be https:// — an s3:// URL is rejected. WebviewViewMode (FULL, HALF or TALL) is required once Application is WEBVIEW. A webview is only a browser window: authentication and the upload path are your application's job, not the service's.",
+      "apiShape": "OpenUrl.Application = WEBVIEW; OpenUrl.WebviewViewMode = FULL | HALF | TALL",
+      "doc": "rcs-suggestions.html#rcs-suggestions-openurl",
+      "status": "demonstrated"
+    },
+    {
+      "key": "calendar_event",
+      "name": "Calendar event",
+      "kind": "rcs-api",
+      "blurb": "A CreateCalendarEvent suggestion writes an event straight into the member's device calendar — title, start, end, description — with no round trip to your backend.",
+      "limitRefs": ["calendarTitleChars", "calendarDescriptionChars"],
+      "doc": "rcs-suggestions.html#rcs-suggestions-calendar",
+      "status": "demonstrated"
+    },
+    {
+      "key": "show_location",
+      "name": "Show location",
+      "kind": "rcs-api",
+      "blurb": "Opens the device's native map at coordinates you supply, with an optional pin label.",
+      "doc": "rcs-suggestions.html#rcs-suggestions-showlocation",
+      "status": "demonstrated"
+    },
+    {
+      "key": "request_location",
+      "name": "Request location",
+      "kind": "rcs-api",
+      "blurb": "Asks the member to share their current location using the native Apple or Android map interface; the coordinates arrive as a separate inbound event. The only suggestion type where the member volunteers data — they choose whether to answer.",
+      "gotcha": "The reply is latitude and longitude only — no street address, no place name — so any human-readable location is your own reverse geocode. Handle the member simply never tapping it: keep a typed answer available as well.",
+      "doc": "rcs-suggestions.html#rcs-suggestions-requestlocation",
+      "status": "demonstrated"
+    },
+    {
+      "key": "dial_phone",
+      "name": "Dial phone",
+      "kind": "rcs-api",
+      "blurb": "Starts a call to an E.164 number from inside the thread.",
+      "doc": "rcs-suggestions.html#rcs-suggestions-dialphone",
+      "status": "demonstrated"
+    },
+    {
+      "key": "time_to_live",
+      "name": "TimeToLive",
+      "kind": "rcs-api",
+      "blurb": "An expiry window on SendRcsMessage. If the message isn't delivered in time the service tries to revoke it, so the member never sees a stale one — the right behaviour for a one-time code.",
+      "gotcha": "Expiry is reported as a single event type, RCS_TTL_EXPIRED, which means no delivery confirmation arrived before the TTL elapsed. That is not proof the handset never received the message, so make any replacement message safe to receive twice.",
+      "limitRefs": ["ttlSecondsMax"],
+      "doc": "rcs-message-expiration.html",
+      "status": "demonstrated"
+    },
+    {
+      "key": "per_message_fallback",
+      "name": "Per-message SMS fallback",
+      "kind": "rcs-api",
+      "blurb": "A FallbackConfiguration on SendRcsMessage: separate SMS or MMS content that goes out if RCS fails immediately or the TTL expires. Distinct from the automatic, pool-based fallback that SendTextMessage gets.",
+      "gotcha": "The fallback OriginationIdentity must be a phone number or sender ID — never a pool or an RCS agent. Its body caps at 1,600 characters against the RCS body's 3,072, so long RCS content has no automatic SMS equivalent; write the fallback separately.",
+      "limitRefs": ["fallbackBodyChars"],
+      "doc": "rcs-fallback-per-message.html",
+      "status": "demonstrated",
+      "statusNote": "Wired on the entry message of 13 of the 20 use case examples — one hand-written SMS body each, since a card's chips, images and map pins have no plain-text equivalent — but inactive unless you deploy with -c smsFallbackNumber=+1…, because a fallback needs an SMS-capable origination identity this stack cannot provision for you. While it is inactive no FallbackConfiguration is attached at all, so RCS_FALLEN_BACK_TO_SMS never fires and the Recipients tab's Fell back to SMS column stays at zero; Settings reports which state you are in."
+    },
+    {
+      "key": "pool_fallback",
+      "name": "Automatic SMS fallback (pools)",
+      "kind": "rcs-api",
+      "blurb": "Send SendTextMessage through a phone pool holding both an RCS agent and SMS numbers, and the service tries RCS first, then falls back to SMS on its own — no fallback logic in your application.",
+      "doc": "rcs-sms-fallback.html",
+      "status": "not-demonstrated",
+      "statusNote": "This demo sends directly to its agent, so every message is sent over RCS. Production senders should generally use a pool."
+    },
+    {
+      "key": "delivery_receipts",
+      "name": "Delivery receipts",
+      "kind": "rcs-api",
+      "blurb": "RCS reports delivery from the device itself, not from the carrier network — stronger evidence than an SMS DLR. It's also the billing basis: you pay only for messages confirmed delivered to a device.",
+      "gotcha": "Read messageStatus to find the outcome. An RCS_DELIVERED event carries a messageStatus of DELIVERED, PENDING, UNDELIVERABLE or REJECTED, so count a message as delivered only when messageStatus is DELIVERED.",
+      "doc": "rcs-events.html#rcs-events-delivery-status",
+      "status": "demonstrated",
+      "surfaces": [
+        {"where": "Recipients tab — Delivered column",
+         "file": "web/src/views/Recipients.tsx", "evidence": "label=\"Delivered\""}
+      ],
+      "statusNote": "On a testing agent, delivery and read events appear once the agent is launched in a country, so the Delivered and Read columns stay at zero until then."
+    },
+    {
+      "key": "read_receipts",
+      "name": "Read receipts",
+      "kind": "rcs-api",
+      "blurb": "An RCS_READ event when the member opens the message. Read rate is READ divided by DELIVERED — the two counters the Recipients tab shows side by side.",
+      "doc": "rcs-events.html#rcs-events-read-receipts",
+      "status": "demonstrated",
+      "surfaces": [
+        {"where": "Recipients tab — Read column",
+         "file": "web/src/views/Recipients.tsx", "evidence": "label=\"Read\""}
+      ],
+      "statusNote": "Same as delivery receipts: on a testing agent, read events appear once the agent is launched in a country."
+    },
+    {
+      "key": "two_way",
+      "name": "2-way messaging",
+      "kind": "rcs-api",
+      "blurb": "Inbound member traffic — typed text, taps, shared locations, photos — published to an SNS topic configured on the agent. Suggestion taps arrive here only, never on a configuration set's event destination.",
+      "doc": "rcs-inbound.html",
+      "status": "demonstrated"
+    },
+    {
+      "key": "inbound_media",
+      "name": "Inbound media",
+      "kind": "rcs-api",
+      "blurb": "A photo the member sends in the thread: End User Messaging fetches it from the carrier network, writes it to an S3 bucket you nominate, and publishes the location to your two-way topic.",
+      "gotcha": "Inbound media arrives as a JSON envelope inside messageBody; this sample detects it by its mediaStatus field.",
+      "doc": "rcs-inbound-media.html",
+      "status": "demonstrated"
+    },
+    {
+      "key": "typing_indicators",
+      "name": "Typing indicators",
+      "kind": "rcs-api",
+      "blurb": "The member's own typing arrives inbound as a messageBody with type RCS_TYPING.",
+      "doc": "rcs-events.html#rcs-events-typing-indicators",
+      "status": "planned-by-aws",
+      "statusNote": "The member's own typing arrives as an inbound event, and this demo records it and shows it in the status bar. Agent-initiated typing indicators and read receipts — your agent showing that it is composing — are documented as planned, not yet available."
+    },
+    {
+      "key": "message_feedback",
+      "name": "Message feedback",
+      "kind": "rcs-api",
+      "blurb": "Set MessageFeedbackEnabled on the send, then call PutMessageFeedback to report your own application-level outcome for that message.",
+      "doc": "rcs-rich-messaging.html#rcs-rich-messaging-api",
+      "status": "not-demonstrated",
+      "statusNote": "Nothing in this demo has an application-level outcome worth reporting back. Use it to report an outcome that your own system holds — that an order actually shipped, that an OTP was accepted."
+    },
+    {
+      "key": "conversational_pricing",
+      "name": "Conversational pricing",
+      "kind": "rcs-api",
+      "blurb": "Outside the US an agent can be registered for conversational pricing: one session fee covers every message exchanged with a recipient in a fixed 24-hour window, instead of per-message charges. Chosen at registration via billingCategory and applied to all of that agent's traffic.",
+      "gotcha": "Not available in the United States. A session starts only when both sides participate; a message that no session covers is billed individually after 24 hours. See the billing page for the details.",
+      "doc": "rcs-billing.html#rcs-billing-conversational",
+      "status": "not-demonstrated",
+      "statusNote": "The channel adapter already recognises and skips the CONVERSATION_STARTED event, so the plumbing is present; the pricing model itself is not something a demo can show."
+    },
+    {
+      "key": "verified_identity",
+      "name": "Verified brand identity",
+      "kind": "rcs-api",
+      "blurb": "Your logo, display name, description and brand colour, rendered by the messaging app itself rather than by you — which is what makes an RCS sender hard to impersonate, and the reason RCS reduces phishing exposure relative to SMS. On a testing agent the logo and name render on both platforms but no verified badge appears on either; iOS instead shows \"Verified by Google\" on the agent info sheet and Android adds \"This is an RCS for Business chat.\" to the thread. Checked on hardware.",
+      "doc": "rcs-agents.html",
+      "status": "demonstrated",
+      "surfaces": [
+        {"where": "Settings tab — the live identity read off the AWS registration, the brand this repo declares, and brand identity in test vs production",
+         "file": "web/src/views/Settings.tsx", "evidence": "Brand identity: testing vs production"},
+        {"where": "GET /api/agent-identity — resolves the registration's real logo/banner to presigned URLs",
+         "file": "lambda/dashboard_handler.py", "evidence": "def get_agent_identity"},
+        {"where": "Device preview — the agent header, on both the Android and iOS mockups",
+         "file": "web/src/components/PhonePreview.tsx", "evidence": "function AgentHeader"}
+      ]
+    },
+    {
+      "key": "event_destinations",
+      "name": "Event destinations",
+      "kind": "rcs-api",
+      "blurb": "Outbound status events route through a configuration set to SNS, Amazon Data Firehose, or CloudWatch Logs. RCS_ALL subscribes to every RCS event type with one matching type.",
+      "doc": "rcs-events.html#rcs-events-routing",
+      "status": "demonstrated",
+      "surfaces": [
+        {"where": "cdk deploy — the configuration set's event destination",
+         "file": "lambda/custom_resources/eum_wiring.py", "evidence": "EventDestinationName"}
+      ],
+      "statusNote": "This demo wires SNS only, and points it at the same topic as the agent's two-way channel so one Lambda sees everything."
+    },
+    {
+      "key": "test_devices",
+      "name": "Verified test devices",
+      "kind": "rcs-api",
+      "blurb": "A testing agent gives you the full API with no carrier approval, but delivers only to phone numbers you have registered and that have accepted the tester invitation.",
+      "gotcha": "The invitation is an RBM Tester Management message with Make me a tester / Decline buttons, not an OTP — and on iOS 18+ it often lands under Unknown Senders.",
+      "limitRefs": ["testDevicesPerAgent"],
+      "doc": "rcs-testing.html",
+      "status": "demonstrated",
+      "surfaces": [
+        {"where": "Recipients tab — add and verify a device",
+         "file": "web/src/views/Recipients.tsx", "evidence": "api.addTester"}
+      ]
+    },
+    {
+      "key": "postback_navigation",
+      "name": "Postback navigation",
+      "kind": "demo-pattern",
+      "blurb": "This demo's routing convention: every chip carries a namespaced PostbackData (rx_*, appt_*, store_*), and the adapter resolves it by prefix when flow state has already expired — so a button tapped an hour later still works.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "conversational_flow",
+      "name": "Conversational flow",
+      "kind": "demo-pattern",
+      "blurb": "Multi-turn state for one member held in DynamoDB with a 30-minute expiry, so a flow can ask a question and understand the answer.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "event_driven_send",
+      "name": "Event-driven send",
+      "kind": "demo-pattern",
+      "blurb": "The business initiates: the dashboard (standing in for your backend) pushes a message to a member who wasn't expecting it, rather than replying to something they sent.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "persistent_cart",
+      "name": "Persistent cart",
+      "kind": "demo-pattern",
+      "blurb": "Cart contents kept in DynamoDB against a hashed phone number, so the member can add items across several turns and check out later.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "checkout",
+      "name": "Checkout",
+      "kind": "demo-pattern",
+      "blurb": "Order confirmation in-thread at the end of the store flow. A real implementation would hand off to a payment page in a webview.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "ai_agent",
+      "name": "AI agent",
+      "kind": "demo-pattern",
+      "blurb": "Amazon Bedrock answers in the thread, grounded on the Markdown in content/ rather than on model knowledge.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "natural_language",
+      "name": "Natural language",
+      "kind": "demo-pattern",
+      "blurb": "Free-typed questions are handled, not just taps. There is deliberately no \"sorry, I didn't understand\" dead end.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "provider_directory",
+      "name": "Provider directory",
+      "kind": "demo-pattern",
+      "blurb": "Sample provider data from content/providers.md, so the AI search has something real to ground on.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "human_handover",
+      "name": "Human handover",
+      "kind": "demo-pattern",
+      "blurb": "A flag in DynamoDB silences the bot for one conversation so an operator can answer over the same RCS channel. Nothing in RCS distinguishes a human's message from a bot's.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "agent_console",
+      "name": "Agent console",
+      "kind": "demo-pattern",
+      "blurb": "The dashboard's 2-way Conversations tab, standing in for a contact-centre agent's screen.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "approval_flow",
+      "name": "Approval flow",
+      "kind": "demo-pattern",
+      "blurb": "A request that waits on someone else's decision — a manager approving PTO, a coworker accepting a shift — with the pending state held in DynamoDB.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "cross_flow_navigation",
+      "name": "Cross-flow navigation",
+      "kind": "demo-pattern",
+      "blurb": "Chips that jump from one vignette into another, so the member experiences one assistant rather than a menu of demos.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "genai_classification",
+      "name": "GenAI classification",
+      "kind": "demo-pattern",
+      "blurb": "Bedrock describes a received photo in one sentence, under an explicit instruction never to transcribe names, numbers, IDs or medical detail.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "heic_conversion",
+      "name": "HEIC conversion",
+      "kind": "demo-pattern",
+      "blurb": "iPhones upload HEIC by default and browsers can't render it, so a Lambda converts to JPEG and applies the EXIF orientation. For non-HEIC images with no EXIF orientation, which is common for iOS in-app browser uploads, it turns the image 180 degrees only when two vision-model looks agree; it never applies a quarter turn on a model's say-so.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "otp",
+      "name": "One-time code",
+      "kind": "demo-pattern",
+      "blurb": "A short numeric code with an expiry, the canonical use case for TimeToLive plus SMS fallback.",
+      "gotcha": "This demo generates codes with random.randint and applies no attempt limit — adequate for a demo, not for authenticating anyone. Use a CSPRNG and rate-limit verification in anything real.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "not_for_phi",
+      "name": "Not for PII/PHI",
+      "kind": "caveat",
+      "blurb": "This path carries file bytes through the RCS thread, so they cross the carrier network — in both directions. Inbound, a photo the member sends is delivered through it; outbound, a FileMessage references an s3:// object that AWS downloads from your bucket, rehosts and presigns for the aggregator, so those bytes leave your account too. Google is part of the RCS delivery chain, which makes your use of the channel subject to the Google RCS for Business Terms of Service — including how Google may use message content. Keep this path for content that is generic, non-sensitive, or identical for every recipient, and use a webview for anything that identifies a person. These patterns are illustrative: real PHI needs HIPAA controls beyond the transport, including an AWS Business Associate Addendum (BAA), access controls, audit logging and encryption, and you are responsible for your own HIPAA compliance (AWS HIPAA compliance: https://aws.amazon.com/compliance/hipaa-compliance/).",
+      "doc": "rcs-overview.html",
+      "status": "demonstrated"
+    },
+    {
+      "key": "compliance_forward",
+      "name": "Off-carrier transport",
+      "kind": "caveat",
+      "blurb": "The file moves between the member's browser and private S3 without ever entering the message thread, so it never transits the carrier/RCS network: inbound, the browser PUTs it with a presigned URL; outbound, a webview fetches it with a short-lived presigned GET. That is the transport to choose for PII or PHI — but transport is only one control, and in this demo the webview pages are unauthenticated and the conversation hash in their URL is an unsalted hash of the phone number, so a real deployment still owes a member sign-in, per-member object keys and an access log. These patterns are illustrative: real PHI needs HIPAA controls beyond the transport, including an AWS Business Associate Addendum (BAA), access controls, audit logging and encryption, and you are responsible for your own HIPAA compliance (AWS HIPAA compliance: https://aws.amazon.com/compliance/hipaa-compliance/).",
+      "doc": "rcs-suggestions.html#rcs-suggestions-openurl",
+      "status": "demonstrated"
+    }
+  ]
+}

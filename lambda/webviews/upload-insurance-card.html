@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{BRAND_NAME}} — Secure Document Upload</title>
+<style>
+  :root { --accent: {{ACCENT}}; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1a1a1a; background: #f6f8f8; }
+  header { background: var(--accent); color: #fff; padding: 20px 18px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; opacity: .85; font-size: 13px; }
+  main { padding: 18px; }
+  .card { background: #fff; border: 1px solid #e4e9e9; border-radius: 10px; padding: 18px; }
+  .note { color: #667; font-size: 13px; margin: 0 0 14px; }
+  .lock-note { display: flex; gap: 8px; align-items: flex-start; background: #f0f7f6; border: 1px solid #d5e8e6;
+               border-radius: 8px; padding: 10px 12px; margin-bottom: 16px; font-size: 12px; color: #445; }
+  .lock-note svg { flex-shrink: 0; margin-top: 1px; }
+  input[type=file] { display: none; }
+  .pick-btn { display: block; width: 100%; text-align: center; padding: 14px; border-radius: 10px;
+              border: 2px dashed #cfd8d8; background: #fafcfc; color: #445; font-size: 15px; cursor: pointer; }
+  .pick-btn.has-file { border-style: solid; border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .upload-btn { margin-top: 14px; width: 100%; padding: 13px; border-radius: 10px; border: none;
+                background: var(--accent); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+  .upload-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .status { margin-top: 16px; font-size: 14px; color: #445; text-align: center; }
+  .status.error { color: #b3261e; }
+  .preview { margin-top: 16px; text-align: center; }
+  .preview img { max-width: 100%; border-radius: 10px; border: 1px solid #e4e9e9; cursor: zoom-in; }
+  .image-modal { position: fixed; inset: 0; z-index: 1000; display: none; align-items: center; justify-content: center;
+                 padding: 20px; background: rgba(0, 0, 0, .86); }
+  .image-modal.open { display: flex; }
+  .image-modal img { max-width: 100%; max-height: 85vh; object-fit: contain; border-radius: 8px; }
+  .image-modal button { position: absolute; top: 16px; right: 16px; width: 42px; height: 42px; border: 0; border-radius: 50%;
+                        background: #fff; color: #223; font-size: 28px; line-height: 1; cursor: pointer; }
+  .classification { margin-top: 10px; font-size: 13px; color: #667; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #cfd8d8; border-top-color: var(--accent);
+             border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Secure Document Upload</h1>
+    <!-- Deliberately does NOT claim an authenticated session: this route is
+         unauthenticated by design in this demo (see flows/insurance_upload.py).
+         What is true is that the bytes go straight from this browser to private
+         S3 over TLS, never through the message thread. -->
+    <p>{{BRAND_NAME}} — Encrypted direct upload</p>
+  </header>
+  <main>
+    <!--
+      DEMO ONLY. Same pattern as the demo notes in rx-details.html and
+      pre-visit.html. This page has no member sign-in (see the comment in the
+      header), so it must not be offered as a place for real documents.
+    -->
+    <p class="note"><strong>Demo only — do not upload real documents.</strong> This upload page is a demo webview opened inside the RCS conversation and has no member sign-in. Use a sample image, not a real insurance card, ID, or medical document; handling real Protected Health Information requires HIPAA controls (see SECURITY.md).</p>
+    <div class="card">
+      <div class="lock-note">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0B6E6F" stroke-width="2">
+          <rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
+        </svg>
+        <span>This file uploads directly and securely — it never travels through the text conversation.</span>
+      </div>
+
+      <label class="pick-btn" id="pickBtn" for="fileInput">Choose a photo or file</label>
+      <input type="file" id="fileInput" accept="image/jpeg,image/jpg,image/png,image/heic,image/heif" />
+
+      <button class="upload-btn" id="uploadBtn" disabled>Upload Securely</button>
+
+      <div class="status" id="status"></div>
+      <div class="preview" id="preview" style="display:none">
+        <img id="previewImg" alt="Uploaded document preview" />
+        <div class="classification" id="classification"></div>
+      </div>
+    </div>
+  </main>
+
+  <div class="image-modal" id="imageModal" role="dialog" aria-modal="true" aria-label="Full-size uploaded document">
+    <button type="button" id="closeImageModal" aria-label="Close full-size image">×</button>
+    <img id="fullSizeImage" alt="Full-size uploaded document" />
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const phoneHash = params.get('ph') || '';
+
+    const fileInput = document.getElementById('fileInput');
+    const pickBtn = document.getElementById('pickBtn');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const statusEl = document.getElementById('status');
+    const previewEl = document.getElementById('preview');
+    const previewImg = document.getElementById('previewImg');
+    const classificationEl = document.getElementById('classification');
+    const imageModal = document.getElementById('imageModal');
+    const fullSizeImage = document.getElementById('fullSizeImage');
+    const closeImageModal = document.getElementById('closeImageModal');
+
+    let selectedFile = null;
+
+    function openImageModal() {
+      if (!previewImg.src) return;
+      fullSizeImage.src = previewImg.src;
+      imageModal.classList.add('open');
+      closeImageModal.focus();
+    }
+
+    function dismissImageModal() {
+      imageModal.classList.remove('open');
+      fullSizeImage.removeAttribute('src');
+    }
+
+    previewImg.addEventListener('click', openImageModal);
+    closeImageModal.addEventListener('click', dismissImageModal);
+    imageModal.addEventListener('click', (event) => {
+      if (event.target === imageModal) dismissImageModal();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && imageModal.classList.contains('open')) dismissImageModal();
+    });
+
+    fileInput.addEventListener('change', () => {
+      selectedFile = fileInput.files[0] || null;
+      if (selectedFile) {
+        pickBtn.textContent = selectedFile.name;
+        pickBtn.classList.add('has-file');
+        uploadBtn.disabled = false;
+      }
+    });
+
+    uploadBtn.addEventListener('click', async () => {
+      if (!selectedFile || !phoneHash) {
+        setStatus('Missing file or conversation reference — reopen this link from your message thread.', true);
+        return;
+      }
+      uploadBtn.disabled = true;
+      setStatus('Requesting secure upload link…', false, true);
+
+      try {
+        const presignResp = await fetch('/api/uploads/presign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone_hash: phoneHash, content_type: selectedFile.type }),
+        });
+        const presign = await presignResp.json();
+        if (presign.error) throw new Error(presign.error);
+
+        setStatus('Uploading…', false, true);
+        const putResp = await fetch(presign.put_url, {
+          method: 'PUT',
+          headers: { 'Content-Type': selectedFile.type },
+          body: selectedFile,
+        });
+        if (!putResp.ok) throw new Error('Upload failed (' + putResp.status + ')');
+
+        setStatus('Processing your file…', false, true);
+        await pollStatus(presign.upload_id);
+      } catch (err) {
+        setStatus('Something went wrong: ' + err.message, true);
+        uploadBtn.disabled = false;
+      }
+    });
+
+    async function pollStatus(uploadId) {
+      const maxAttempts = 30;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const resp = await fetch(`/api/uploads/${encodeURIComponent(phoneHash)}/${encodeURIComponent(uploadId)}/status`);
+        const data = await resp.json();
+        if (data.status === 'READY') {
+          setStatus('Uploaded and verified — you\'re all set.');
+          if (data.preview_url) {
+            previewImg.src = data.preview_url;
+            previewEl.style.display = 'block';
+          }
+          if (data.classification) {
+            classificationEl.textContent = 'What we see: ' + data.classification;
+          }
+          return;
+        }
+        if (data.status === 'FAILED') {
+          setStatus('We couldn\'t process that file' + (data.error ? ': ' + data.error : '') + '.', true);
+          uploadBtn.disabled = false;
+          return;
+        }
+      }
+      setStatus('Still processing — check back in a moment.', true);
+      uploadBtn.disabled = false;
+    }
+
+    // Message text is always rendered with textContent so server-response
+    // strings (presign.error, data.error, caught error messages) can never be
+    // interpreted as HTML. The optional spinner is the only markup, and it is a
+    // fixed element we build in code — never from external data.
+    function setStatus(message, isError, withSpinner) {
+      statusEl.textContent = '';
+      if (withSpinner) {
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner';
+        statusEl.appendChild(spinner);
+      }
+      statusEl.appendChild(document.createTextNode(message));
+      statusEl.className = 'status' + (isError ? ' error' : '');
+    }
+  </script>
+</body>
+</html>

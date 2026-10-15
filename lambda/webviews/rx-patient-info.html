@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{BRAND_NAME}} — Prescription Record</title>
+<style>
+  :root { --accent: {{ACCENT}}; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1a1a1a; background: #f6f8f8; }
+  header { background: var(--accent); color: #fff; padding: 20px 18px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; opacity: .85; font-size: 13px; }
+  main { padding: 18px; }
+  .card { background: #fff; border: 1px solid #e4e9e9; border-radius: 10px; padding: 16px; }
+  .card h2 { margin: 0 0 6px; font-size: 15px; }
+  .card p { margin: 0; color: #445; font-size: 14px; line-height: 1.45; }
+  a.button {
+    display: block; margin-top: 14px; padding: 14px 16px; border-radius: 8px;
+    background: var(--accent); color: #fff; text-align: center; font-size: 16px;
+    font-weight: 600; text-decoration: none;
+  }
+  a.button[aria-disabled="true"] { background: #b9c2c2; pointer-events: none; }
+  .status { margin-top: 12px; font-size: 13px; color: #667; }
+  .status.error { color: #b3261e; }
+  .note { color: #667; font-size: 13px; margin-top: 16px; line-height: 1.5; }
+  .note strong { color: #445; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Your Prescription Record</h1>
+    <p>{{BRAND_NAME}} — Pharmacy</p>
+  </header>
+  <main>
+    <div class="card">
+      <h2>Prescription record (PDF)</h2>
+      <p>
+        Your record includes your name, address, prescriber and directions, so it
+        is not sent into the message thread. It opens here instead, over a
+        private link that expires in a few minutes.
+      </p>
+      <a class="button" id="open" href="#" aria-disabled="true">Preparing your document…</a>
+      <p class="status" id="status"></p>
+    </div>
+    <p class="note">
+      <strong>Why this is a webview and not a file message.</strong> A file
+      attached to an RCS message is fetched from your S3 bucket by AWS End User
+      Messaging, rehosted, and carried to the handset across the carrier network,
+      with Google RCS for Business in the delivery chain. That is the right path
+      for a document that is identical for every member — the Magic Medicine fact
+      sheet in the thread. It is the wrong path for anything that identifies an
+      individual. This page requests a short-lived presigned URL from the demo's
+      own API and the bytes go straight from S3 to this browser over HTTPS, so
+      they never enter the message stream at all.
+    </p>
+    <p class="note">
+      Demo only, and fictitious: there is no real patient, prescriber or drug
+      here. Note also that this page is <strong>not authenticated</strong> — a
+      real system serving Protected Health Information needs a member sign-in on
+      this route, per-member document keys, and an audit log of every fetch.
+      Keeping the document off the carrier path is one control, not all of them.
+    </p>
+  </main>
+<script>
+  // `ph` is the conversation hash the flow put in this page's URL
+  // (common.webview_url); the API scopes the document to it.
+  var ph = new URLSearchParams(location.search).get('ph') || '';
+  var link = document.getElementById('open');
+  var status = document.getElementById('status');
+
+  function fail(message) {
+    link.textContent = 'Document unavailable';
+    status.textContent = message;
+    status.className = 'status error';
+  }
+
+  // The presigned URL is requested on load rather than being baked into the
+  // link the message carried: it expires in 300s, and a link in a thread can be
+  // opened days later.
+  fetch('/api/secure-doc?doc=patient-info&ph=' + encodeURIComponent(ph))
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.url) throw new Error(data.error || 'no url');
+      link.href = data.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.removeAttribute('aria-disabled');
+      link.textContent = 'Open prescription record';
+      status.textContent = 'This link expires in about 5 minutes. Reload the page for a new one.';
+    })
+    .catch(function () {
+      fail('We could not prepare your document. Reopen this page from your message thread.');
+    });
+</script>
+</body>
+</html>

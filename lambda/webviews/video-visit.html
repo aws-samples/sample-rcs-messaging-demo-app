@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>{{BRAND_NAME}} — Video Visit</title>
+<!--
+  A WebRTC video call using Amazon Chime SDK for JavaScript, opened from an RCS
+  OpenUrl suggestion. This is the member (patient) side; the clinician joins the
+  same meeting from the operator dashboard. See lambda/flows/video_visit.py and
+  lambda/video_visit.py.
+
+  Four things about this page are deliberate and worth not "cleaning up":
+
+  1. Nothing happens until the Join button is tapped. Not politeness — iOS
+     requires a user gesture before audio will play, and a prompt raised from a
+     real tap is the one a messaging-app webview is most likely to honour.
+     Auto-joining on load would fail on iOS in a way that looks like a WebRTC
+     problem rather than an autoplay policy.
+
+  2. Errors are rendered large on the page and echoed to CloudWatch via the
+     ?report= query string that serve_webview logs. There is no console in an RCS
+     webview. A silent failure here is unfixable, so every failure is loud.
+
+  3. Every failure leaves the Join button usable again. Rejoining is the only
+     recovery a member has in a webview with no console and no reload affordance,
+     and the backend budgets joins generously so that retrying is cheap.
+
+  4. `pagehide` does NOT end the visit — it only stops the heartbeat. In an iOS
+     webview that event fires when the page is merely backgrounded, so tearing
+     the meeting down there used to destroy the call under the clinician the
+     moment the member glanced at another app. Departure is now inferred from the
+     heartbeat lapsing, and only the Leave button ends the visit outright.
+
+  The SDK is served from this deployment, not a CDN: {{CHIME_SDK_SRC}} is
+  substituted by serve_webview and resolves to /webview/chime-sdk.js, an ES module
+  bundled by scripts/vendor-chime-sdk.mjs and committed to the repo. A page that
+  asks for the camera should not let a third party run code in it, and the demo
+  should not break when a CDN is unreachable.
+-->
+<style>
+  :root { --accent: {{ACCENT}}; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; font-family: -apple-system, Helvetica, Arial, sans-serif;
+         color: #fff; background: #101414; display: flex; flex-direction: column; }
+  header { background: var(--accent); padding: 12px 16px; flex: 0 0 auto; }
+  header h1 { margin: 0; font-size: 16px; }
+  header p { margin: 3px 0 0; font-size: 12px; opacity: .85; }
+  main { flex: 1 1 auto; position: relative; overflow: hidden; }
+  /* Remote participant fills the frame; local preview is a thumbnail over it —
+     the layout every video-call UI has converged on, and the one that survives
+     a narrow webview without media queries. */
+  #remote { width: 100%; height: 100%; object-fit: cover; background: #000; }
+  #local { position: absolute; right: 12px; bottom: 12px; width: 92px; height: 122px;
+           object-fit: cover; border-radius: 10px; border: 2px solid rgba(255,255,255,.7);
+           background: #000; }
+  #overlay { position: absolute; inset: 0; display: flex; flex-direction: column;
+             align-items: center; justify-content: center; gap: 14px; padding: 22px;
+             text-align: center; background: #101414; }
+  #overlay.hidden { display: none; }
+  #status { font-size: 20px; font-weight: 700; line-height: 1.3; }
+  #detail { font-size: 13px; color: #9fb0b0; line-height: 1.45; max-width: 30em;
+            word-break: break-word; }
+  button { padding: 15px 22px; font-size: 16px; font-weight: 700; color: #fff;
+           background: var(--accent); border: 0; border-radius: 12px; min-width: 220px; }
+  button.ghost { background: #263030; }
+  footer { flex: 0 0 auto; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+           display: flex; gap: 10px; background: #181e1e; }
+  footer button { flex: 1; min-width: 0; padding: 12px; font-size: 14px; }
+  footer.hidden { display: none; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Video Visit</h1>
+    <!-- serve_webview HTML-escapes the brand name, which makes it safe in markup
+         (here and in <title>) but not inside the script below: entities are not
+         decoded there and a quote ends a string literal. Keep it out of the
+         script; the preview banner rewrites only the tagline span. -->
+    <p>{{BRAND_NAME}}<span id="tagline"> — secure, in-conversation</span></p>
+  </header>
+  <main>
+    <video id="remote" autoplay playsinline></video>
+    <video id="local" autoplay playsinline muted></video>
+    <!-- Chime binds meeting audio to an audio element; it must exist before start(). -->
+    <audio id="meeting-audio" style="display:none"></audio>
+    <div id="overlay">
+      <div id="status">Ready to join</div>
+      <div id="detail">You'll be asked for camera and microphone access.</div>
+      <button id="join">Join video visit</button>
+    </div>
+  </main>
+  <footer class="hidden" id="controls">
+    <button class="ghost" id="mute">Mute</button>
+    <button class="ghost" id="camera">Camera off</button>
+    <button id="leave">Leave</button>
+  </footer>
+
+<script type="module">
+// Same-origin, version-pinned by the ?v= the server appends from the bundle's own
+// banner. See the comment block above and scripts/vendor-chime-sdk.mjs.
+import {
+  ConsoleLogger, LogLevel, DefaultDeviceController,
+  MeetingSessionConfiguration, DefaultMeetingSession,
+} from '{{CHIME_SDK_SRC}}';
+
+const params = new URLSearchParams(location.search);
+const visit = params.get('visit') || '';
+
+// Both /api/video/* calls carry the role. It decides who may end the meeting for
+// everybody (the clinician) and who may not (this page) — see video_visit.end().
+const ROLE = 'member';
+const HEARTBEAT_MS = 15000;
+
+// Set when the operator dashboard opens this page in its "Video preview" modal
+// (web/src/components/VideoPreviewModal.tsx) instead of a handset opening it from
+// the conversation. Everything still runs for real — same token, same meeting,
+// same camera prompt; the only differences are that the page says so and that the
+// microphone starts muted, because the clinician's client is very likely open on
+// the same machine and two unmuted clients in one room is a feedback loop.
+const PREVIEW = params.get('preview') === '1';
+
+const statusEl = document.getElementById('status');
+const detailEl = document.getElementById('detail');
+const overlay = document.getElementById('overlay');
+const controls = document.getElementById('controls');
+const joinBtn = document.getElementById('join');
+const remote = document.getElementById('remote');
+const local = document.getElementById('local');
+
+let session = null;
+let av = null;
+let joined = false;
+let muted = false;
+let cameraOn = true;
+let heartbeat = null;
+
+function say(status, detail) {
+  statusEl.textContent = status;
+  if (detail !== undefined) detailEl.textContent = detail;
+}
+
+// There is no console in an RCS webview, so anything worth knowing goes to
+// CloudWatch through the route that served this page. Image GET, not
+// sendBeacon: /webview/{proxy+} is registered GET-only and sendBeacon POSTs.
+function log(stage, extra) {
+  const payload = Object.assign({
+    probe: 'rcs-webview-video', stage,
+    t: new Date().toISOString(), visit: visit.slice(0, 8),
+    ua: navigator.userAgent,
+  }, extra || {});
+  try {
+    new Image().src = '/webview/video-visit?report='
+      + encodeURIComponent(JSON.stringify(payload).slice(0, 1800));
+  } catch (e) { /* best effort */ }
+}
+
+// Tell the backend this page is still open, so the clinician's dashboard can show
+// that the patient is waiting. Image GET for the same reason as log(): the route
+// is GET-only. A missed beat is harmless — the server treats presence as stale
+// only after several of them.
+function beat() {
+  try {
+    new Image().src = '/api/video/ping?visit=' + encodeURIComponent(visit) + '&role=' + ROLE;
+  } catch (e) { /* best effort */ }
+}
+
+function startHeartbeat() {
+  if (heartbeat) return;
+  beat();
+  heartbeat = setInterval(beat, HEARTBEAT_MS);
+}
+
+function stopHeartbeat() {
+  if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+}
+
+function fail(status, detail, extra) {
+  overlay.classList.remove('hidden');
+  controls.classList.add('hidden');
+  stopHeartbeat();
+  // Re-armed, always. A failed join is usually transient (a denied prompt that
+  // will be granted, a dropped request, a meeting that aged out), and tapping
+  // Join again is the member's only recovery path in an RCS webview.
+  joinBtn.disabled = false;
+  joinBtn.textContent = 'Try again';
+  say(status, detail);
+  log('failed', Object.assign({ status, detail: String(detail) }, extra || {}));
+}
+
+async function join() {
+  joinBtn.disabled = true;
+  // Discard anything a previous attempt left behind. Without this a retry leaks
+  // the old session's observers, and its audioVideoDidStop lands on the new UI.
+  if (av) {
+    try { av.stop(); } catch (e) { /* already down */ }
+  }
+  session = null;
+  av = null;
+  joined = false;
+  say('Connecting…', 'Requesting camera and microphone.');
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    // Distinguished from a denial on purpose: a missing API means this webview
+    // does not expose WebRTC capture at all, and no permission grant would help.
+    // That is the finding the whole experiment is looking for.
+    return fail('Camera unavailable here',
+      'This webview does not expose getUserMedia. Go back and tap "Open in browser" instead.',
+      { reason: 'NO_GETUSERMEDIA' });
+  }
+  if (!visit) return fail('Missing visit link', 'This link is incomplete. Ask the clinic to resend it.');
+
+  // Ask for permission ourselves, before Chime does, and immediately release it.
+  //
+  // Two reasons, both WebKit. Safari and WKWebView return an empty device list
+  // from enumerateDevices until a permission grant exists, so
+  // listVideoInputDevices() below would come back empty and we would conclude
+  // "no camera on this device" when the truth is "nobody has asked yet". And a
+  // direct call gives us the raw DOMException name, which is the actual finding
+  // this experiment is after — routed through the SDK it arrives as prose.
+  //
+  // This does not double-prompt: once granted, Chime's own getUserMedia reuses
+  // the existing permission.
+  let granted = { audio: false, video: false };
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    granted = { audio: true, video: true };
+    s.getTracks().forEach((t) => t.stop());
+  } catch (e) {
+    log('prime-av-failed', { error: String(e), name: e && e.name });
+    // Retry audio alone. Mic-without-camera is a materially different answer
+    // about this webview than nothing at all, and it still makes a usable call.
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      granted.audio = true;
+      s.getTracks().forEach((t) => t.stop());
+    } catch (e2) {
+      return fail('No camera or microphone', permissionHint(e2),
+        { reason: 'PRIME_DENIED', error: String(e2), name: e2 && e2.name });
+    }
+  }
+  log('primed', granted);
+  cameraOn = granted.video;
+
+  let join;
+  try {
+    const resp = await fetch('/api/video/join?visit=' + encodeURIComponent(visit) + '&role=' + ROLE);
+    join = await resp.json();
+  } catch (e) {
+    return fail('Could not reach the clinic', 'Network error contacting the visit service: ' + e, { reason: 'FETCH' });
+  }
+  if (!join || join.error) {
+    return fail('Cannot join this visit', join && join.error ? join.error : 'Unknown error', { reason: 'JOIN_REJECTED' });
+  }
+
+  // From here on the member counts as present, and the clinician's dashboard says
+  // so. Deliberately before the WebRTC negotiation rather than after
+  // audioVideoDidStart: the point of the indicator is to tell the clinician when
+  // to walk in, and "the patient is connecting" is already that moment.
+  startHeartbeat();
+  say('Connecting…', 'Waiting for the care team to join.');
+
+  const logger = new ConsoleLogger('chime', LogLevel.WARN);
+  const deviceController = new DefaultDeviceController(logger);
+  session = new DefaultMeetingSession(
+    new MeetingSessionConfiguration(join.Meeting, join.Attendee), logger, deviceController);
+  av = session.audioVideo;
+
+  av.addObserver({
+    videoTileDidUpdate: (tile) => {
+      if (!tile.boundAttendeeId) return;
+      // localTile tells the two apart; binding a remote stream into the
+      // thumbnail (or vice versa) is the classic way this UI goes wrong.
+      av.bindVideoElement(tile.tileId, tile.localTile ? local : remote);
+      if (!tile.localTile) log('remote-video', { tileId: tile.tileId });
+    },
+    audioVideoDidStart: () => {
+      joined = true;
+      overlay.classList.add('hidden');
+      controls.classList.remove('hidden');
+      if (PREVIEW) {
+        av.realtimeMuteLocalAudio();
+        muted = true;
+        document.getElementById('mute').textContent = 'Unmute';
+      }
+      log('started', { preview: PREVIEW });
+    },
+    audioVideoDidStop: (sessionStatus) => {
+      const code = sessionStatus && sessionStatus.statusCode && sessionStatus.statusCode();
+      log('stopped', { statusCode: String(code) });
+      if (joined) fail('Visit ended', 'The call has ended. You can close this window.');
+    },
+    connectionDidBecomePoor: () => say('Connection is poor', 'Video may pause. Audio will keep going.'),
+  });
+
+  // Audio output first: Chime needs the element bound before start(), and on
+  // iOS this is the call that must happen inside the user gesture that led here.
+  try {
+    await av.bindAudioElement(document.getElementById('meeting-audio'));
+  } catch (e) {
+    log('bind-audio-failed', { error: String(e) });  // not fatal; video may still work
+  }
+
+  // Microphone, then camera, as separate steps. If the camera fails but the mic
+  // works, the visit continues as an audio call rather than failing outright —
+  // and the distinction is recorded, because "mic yes, camera no" is a different
+  // answer about the webview than "neither".
+  try {
+    const mics = await av.listAudioInputDevices();
+    if (!mics.length) throw new Error('no audio input devices');
+    await av.startAudioInput(mics[0].deviceId);
+  } catch (e) {
+    return fail('No microphone', permissionHint(e), { reason: 'MIC', error: String(e) });
+  }
+
+  if (cameraOn) {
+    try {
+      const cams = await av.listVideoInputDevices();
+      if (!cams.length) throw new Error('no video input devices');
+      await av.startVideoInput(cams[0].deviceId);
+    } catch (e) {
+      cameraOn = false;
+      log('camera-failed', { error: String(e) });
+      say('Joining without video', 'The camera is unavailable, so this will be audio only.');
+    }
+  } else {
+    say('Joining without video', 'Camera access was refused, so this will be audio only.');
+  }
+
+  av.start();
+  if (cameraOn) av.startLocalVideoTile();
+  log('start-called', { cameraOn });
+}
+
+// getUserMedia failures all arrive here as strings. The names are the whole
+// diagnostic: NotAllowedError means a decision went against us — either the
+// member tapped deny, or the messaging app never implemented the permission
+// callback and auto-denied without prompting. Whether a prompt appeared is the
+// only way to tell those apart, so the copy asks.
+function permissionHint(e) {
+  const s = String(e);
+  if (s.indexOf('NotAllowedError') >= 0) {
+    return 'Access was denied. If you never saw a permission prompt, this messaging app '
+      + 'is blocking it — go back and tap "Open in browser".';
+  }
+  if (s.indexOf('NotFoundError') >= 0) return 'No microphone was found on this device.';
+  if (s.indexOf('NotReadableError') >= 0) return 'Another app is using the microphone.';
+  return s;
+}
+
+// Explicit departure: the member tapped Leave. Tears the local session down and
+// tells the backend, which deletes the Chime meeting if that leaves it empty
+// (attendee-minutes are billed) and keeps it if the clinician is still in it.
+function leave() {
+  stopHeartbeat();
+  try {
+    if (av) { av.stopLocalVideoTile(); av.stop(); }
+  } catch (e) { /* tearing down */ }
+  try {
+    new Image().src = '/api/video/end?visit=' + encodeURIComponent(visit) + '&role=' + ROLE;
+  } catch (e) { /* best effort */ }
+}
+
+joinBtn.addEventListener('click', () => { join().catch((e) => fail('Something went wrong', String(e))); });
+document.getElementById('mute').addEventListener('click', (ev) => {
+  if (!av) return;
+  muted = !muted;
+  if (muted) av.realtimeMuteLocalAudio(); else av.realtimeUnmuteLocalAudio();
+  ev.target.textContent = muted ? 'Unmute' : 'Mute';
+});
+document.getElementById('camera').addEventListener('click', async (ev) => {
+  if (!av) return;
+  try {
+    cameraOn = !cameraOn;
+    if (cameraOn) {
+      const cams = await av.listVideoInputDevices();
+      if (!cams.length) throw new Error('no video input devices');
+      await av.startVideoInput(cams[0].deviceId);
+      av.startLocalVideoTile();
+    } else {
+      av.stopLocalVideoTile();
+      await av.stopVideoInput();
+    }
+    ev.target.textContent = cameraOn ? 'Camera off' : 'Camera on';
+  } catch (e) {
+    // Turning the camera back on can fail where it was never granted. Say so in
+    // the button rather than throwing an unhandled rejection into a webview with
+    // no console.
+    cameraOn = false;
+    ev.target.textContent = 'No camera';
+    log('camera-toggle-failed', { error: String(e) });
+  }
+});
+document.getElementById('leave').addEventListener('click', () => {
+  leave();
+  overlay.classList.remove('hidden');
+  controls.classList.add('hidden');
+  joinBtn.disabled = false;
+  joinBtn.textContent = 'Rejoin';
+  say('You left the visit', 'You can close this window, or rejoin.');
+  log('left');
+});
+
+// Not leave(). In an iOS webview `pagehide` fires on backgrounding as well as on
+// close, and ending the visit here is what used to destroy the meeting under the
+// clinician when the member switched apps for a moment. Stopping the heartbeat is
+// enough: if they never come back, presence lapses within PRESENCE_TTL_SECONDS,
+// Chime reaps the idle meeting, and the visit's own TTL cleans up the record. If
+// they do come back, pageshow picks the heartbeat straight back up.
+window.addEventListener('pagehide', () => { stopHeartbeat(); log('hidden'); });
+window.addEventListener('pageshow', () => { if (joined) startHeartbeat(); });
+
+if (PREVIEW) {
+  // Said on the page, not just in the URL: whoever is looking at this frame needs
+  // to know the microphone will come up muted, or they will report broken audio.
+  document.getElementById('tagline').textContent =
+    ' — preview of the member\'s page · mic starts muted';
+  detailEl.textContent = 'This is the page the member opens. Your browser will ask for '
+    + 'camera and microphone access for the API domain.';
+}
+
+log('loaded', {
+  secureContext: !!window.isSecureContext,
+  hasGetUserMedia: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+  hasRTCPeerConnection: typeof window.RTCPeerConnection === 'function',
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+# Keeps this sample's RCS feature registry and the code that reads it in step.
+#
+# One job, offline. Runs on every push and pull request and checks
+# content/rcs-features.json against the code that consumes it: every documented
+# limit and feature is wired to the code that reads it, nothing hardcodes a
+# limit, and no `surfaces` claim has gone stale. No network access and no AWS
+# credentials, so it never depends on a third-party site being up.
+#
+# Keeping the AWS doc links and limit values current is a human task, described
+# in docs/updating-rcs-content.md — not something this workflow automates.
+name: RCS content checks
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  registry:
+    name: Registry vs code (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # The Lambdas' Python minor version (PY_TAG in cdk/lib/anyhealth-stack.ts).
+          python-version: '3.14'
+      - name: Check the RCS feature registry
+        run: python3 scripts/check-rcs-registry.py

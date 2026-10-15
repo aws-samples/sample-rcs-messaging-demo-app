@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{BRAND_NAME}} — Camera &amp; Mic Probe</title>
+<!--
+  DIAGNOSTIC PAGE — not part of any member-facing vignette.
+
+  Answers one question: can a page opened from an RCS OpenUrl suggestion reach
+  getUserMedia? RcsOpenUrlAction offers the WEBVIEW / BROWSER choice, and media
+  permissions are set by the messaging app that hosts the webview — Google
+  Messages may host the webview as a Chrome Custom Tab (full permission UI,
+  getUserMedia works) or as an embedded android.webkit.WebView, where the host
+  app must implement WebChromeClient.onPermissionRequest and getUserMedia fails
+  if it does not.
+
+  Send the media_probe vignette to a real handset and tap each chip. The same URL
+  is opened three ways — WEBVIEW FULL, WEBVIEW HALF, and BROWSER — so the browser
+  chip is the control: if it grants and the webview chips do not, the messaging
+  app's webview is the blocker, not the page, the network, or the device.
+
+  Read the result on screen, and/or in the Lambda log group: the page reports a
+  one-line JSON summary back to this same route (see dashboard_handler.serve_webview),
+  because a HALF-mode webview can be too small to read comfortably. The report
+  carries capability data and the user agent only — no phone number, and no media.
+-->
+<style>
+  :root { --accent: {{ACCENT}}; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1a1a1a; background: #f6f8f8; }
+  header { background: var(--accent); color: #fff; padding: 16px 18px; }
+  header h1 { margin: 0; font-size: 17px; }
+  header p { margin: 4px 0 0; opacity: .85; font-size: 12px; }
+  main { padding: 14px 18px 28px; }
+  /* The verdict is deliberately oversized: in HALF view mode this may be the
+     only thing visible without scrolling. */
+  .verdict { font-size: 26px; font-weight: 700; line-height: 1.2; padding: 16px;
+             border-radius: 10px; background: #fff; border: 2px solid #e4e9e9; text-align: center; }
+  .verdict.pass { border-color: #1a7f37; color: #1a7f37; }
+  .verdict.fail { border-color: #b42318; color: #b42318; }
+  .verdict.part { border-color: #b54708; color: #b54708; }
+  .sub { text-align: center; font-size: 13px; color: #667; margin: 8px 0 14px; }
+  video { width: 100%; max-height: 190px; background: #000; border-radius: 10px; display: none; }
+  .card { background: #fff; border: 1px solid #e4e9e9; border-radius: 10px; padding: 12px 14px; margin-top: 14px; }
+  .row { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0;
+         border-bottom: 1px solid #eef2f2; font-size: 13px; }
+  .row:last-child { border-bottom: 0; }
+  .row span:first-child { color: #667; flex: 0 0 auto; }
+  .row span:last-child { font-weight: 600; text-align: right; word-break: break-word; }
+  pre { font-size: 11px; background: #fff; border: 1px solid #e4e9e9; border-radius: 10px;
+        padding: 10px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin-top: 14px; }
+  button { width: 100%; margin-top: 12px; padding: 13px; font-size: 15px; font-weight: 600;
+           color: #fff; background: var(--accent); border: 0; border-radius: 10px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Camera &amp; Mic Probe</h1>
+    <p>{{BRAND_NAME}} — diagnostic, no data is stored</p>
+  </header>
+  <main>
+    <div class="verdict" id="verdict">Testing…</div>
+    <div class="sub" id="sub">Approve the permission prompt if one appears.</div>
+    <video id="preview" autoplay playsinline muted></video>
+    <div class="card" id="facts"></div>
+    <button id="again">Run again</button>
+    <pre id="raw"></pre>
+  </main>
+<script>
+(function () {
+  var verdictEl = document.getElementById('verdict');
+  var subEl = document.getElementById('sub');
+  var factsEl = document.getElementById('facts');
+  var rawEl = document.getElementById('raw');
+  var video = document.getElementById('preview');
+  var stream = null;
+
+  function row(k, v) {
+    var d = document.createElement('div');
+    d.className = 'row';
+    var a = document.createElement('span'); a.textContent = k;
+    var b = document.createElement('span'); b.textContent = String(v);
+    d.appendChild(a); d.appendChild(b); factsEl.appendChild(d);
+  }
+
+  function stop() {
+    // Release the camera explicitly. An abandoned track leaves the indicator
+    // light on, which in a webview the user cannot obviously close is alarming.
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+  }
+
+  // getUserMedia rejects with a DOMException whose .name is the signal, and the
+  // names separate the cases that matter here:
+  //   NotAllowedError  — a decision was made against us. Either the user tapped
+  //                      deny, or the host app never implemented the permission
+  //                      callback, so the webview auto-denies with no prompt.
+  //                      "No prompt appeared" below is how you tell those apart.
+  //   NotFoundError    — permission is fine, no such device.
+  //   NotReadableError — device is present and permitted but held by something else.
+  //   SecurityError    — insecure context.
+  // A missing navigator.mediaDevices entirely is a different and worse answer:
+  // the WebRTC API surface is not exposed, so no permission grant would help.
+  function describe(err) {
+    if (!err) return 'unknown';
+    return (err.name || 'Error') + (err.message ? ': ' + err.message : '');
+  }
+
+  function attempt(constraints) {
+    try {
+      return navigator.mediaDevices.getUserMedia(constraints)
+        .then(function (s) { return { ok: true, stream: s }; })
+        .catch(function (e) { return { ok: false, error: describe(e), name: e && e.name }; });
+    } catch (e) {
+      // Older WebViews throw synchronously rather than rejecting.
+      return Promise.resolve({ ok: false, error: describe(e), name: e && e.name, sync: true });
+    }
+  }
+
+  function report(data) {
+    var json = JSON.stringify(data);
+    rawEl.textContent = JSON.stringify(data, null, 1);
+    // Send the report back to the route that served this page, so there is a
+    // record in CloudWatch even if the webview is too small to read or the
+    // messaging app closes it. Deliberately an image GET and not
+    // navigator.sendBeacon: sendBeacon issues a POST, /webview/{proxy+} is
+    // registered GET-only (cdk/lib/anyhealth-stack.ts), and sendBeacon returns
+    // true once the request is *queued* — so a 405 would be lost silently, which
+    // is the one failure mode a diagnostic must not have. An image GET also
+    // needs no CORS and no api key.
+    try {
+      new Image().src = '/webview/media-probe?report='
+        + encodeURIComponent(json.slice(0, 1800));  // keep the URL well inside limits
+    } catch (e) { /* best effort only — the on-screen copy is authoritative */ }
+  }
+
+  async function run() {
+    stop();
+    factsEl.innerHTML = '';
+    rawEl.textContent = '';
+    video.style.display = 'none';
+    verdictEl.className = 'verdict';
+    verdictEl.textContent = 'Testing…';
+    subEl.textContent = 'Approve the permission prompt if one appears.';
+
+    var data = {
+      probe: 'rcs-webview-media',
+      t: new Date().toISOString(),
+      ua: navigator.userAgent,
+      secureContext: !!window.isSecureContext,
+      hasMediaDevices: !!(navigator.mediaDevices),
+      hasGetUserMedia: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+      hasRTCPeerConnection: typeof window.RTCPeerConnection === 'function',
+      hasEnumerateDevices: !!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices),
+      // Chrome Custom Tab vs embedded WebView is not directly detectable, but
+      // the "wv" token in the user agent is present for Android WebView and
+      // absent for Chrome and Custom Tabs, which is the best available hint.
+      androidWebViewToken: / wv[);]/.test(navigator.userAgent) || /; wv\)/.test(navigator.userAgent),
+      // Chime SDK JS requires both of these; recording them here means the probe
+      // also answers "would the SDK even load", not just "is there a camera".
+      hasInsertableStreams: typeof window.RTCRtpSender !== 'undefined'
+        && !!(window.RTCRtpSender.prototype && 'createEncodedStreams' in window.RTCRtpSender.prototype),
+      hasAudioContext: typeof (window.AudioContext || window.webkitAudioContext) === 'function',
+    };
+
+    if (!data.hasGetUserMedia) {
+      data.result = 'NO_API';
+      verdictEl.className = 'verdict fail';
+      verdictEl.textContent = 'No media API';
+      subEl.textContent = 'navigator.mediaDevices.getUserMedia is not exposed here. '
+        + 'No permission grant would help — WebRTC capture is unavailable in this webview.';
+      renderFacts(data);
+      report(data);
+      return;
+    }
+
+    var av = await attempt({ video: true, audio: true });
+    data.videoAudio = av.ok ? 'granted' : av.error;
+
+    if (av.ok) {
+      stream = av.stream;
+      data.tracks = stream.getTracks().map(function (t) {
+        return { kind: t.kind, label: t.label, state: t.readyState, muted: t.muted };
+      });
+      video.srcObject = stream;
+      video.style.display = 'block';
+      verdictEl.className = 'verdict pass';
+      verdictEl.textContent = 'Camera + mic OK';
+      // A resolved stream is not proof of usable frames: a webview can hand back
+      // a live track that never produces video. Confirm on the picture below.
+      subEl.textContent = 'Stream acquired. Confirm you can actually see the picture — '
+        + 'a track can be live and still deliver no frames.';
+    } else {
+      // Retry audio only. If audio succeeds where audio+video failed, the webview
+      // does grant media in general and the camera specifically is the problem,
+      // which is a materially different answer for a video-call design.
+      var a = await attempt({ audio: true });
+      data.audioOnly = a.ok ? 'granted' : a.error;
+      if (a.ok) {
+        stream = a.stream;
+        data.tracks = stream.getTracks().map(function (t) {
+          return { kind: t.kind, label: t.label, state: t.readyState, muted: t.muted };
+        });
+        data.result = 'AUDIO_ONLY';
+        verdictEl.className = 'verdict part';
+        verdictEl.textContent = 'Mic only';
+        subEl.textContent = 'Audio was granted, video was not (' + data.videoAudio + '). '
+          + 'Audio-only calling would work here; video would not.';
+      } else {
+        data.result = 'DENIED';
+        verdictEl.className = 'verdict fail';
+        verdictEl.textContent = 'Blocked';
+        subEl.textContent = 'Both attempts failed (' + data.videoAudio + '). '
+          + 'If no prompt appeared, the messaging app never asked — tap the browser chip to compare.';
+      }
+    }
+    if (!data.result) data.result = 'OK';
+
+    // enumerateDevices after the grant attempt: labels are only populated once
+    // permission exists, so an empty-labelled list here is itself informative.
+    if (data.hasEnumerateDevices) {
+      try {
+        var devs = await navigator.mediaDevices.enumerateDevices();
+        data.devices = devs.map(function (d) {
+          return { kind: d.kind, labelled: !!d.label };
+        });
+      } catch (e) { data.devices = describe(e); }
+    }
+
+    renderFacts(data);
+    report(data);
+  }
+
+  function renderFacts(d) {
+    row('Result', d.result);
+    row('Secure context', d.secureContext);
+    row('getUserMedia', d.hasGetUserMedia);
+    row('RTCPeerConnection', d.hasRTCPeerConnection);
+    row('Android WebView UA', d.androidWebViewToken);
+    row('video+audio', d.videoAudio || '—');
+    if (d.audioOnly) row('audio only', d.audioOnly);
+    (d.tracks || []).forEach(function (t) { row(t.kind + ' track', (t.label || '(no label)') + ' / ' + t.state); });
+    if (Array.isArray(d.devices)) {
+      row('devices seen', d.devices.length);
+      row('device labels', d.devices.some(function (x) { return x.labelled; }) ? 'visible' : 'hidden');
+    }
+  }
+
+  document.getElementById('again').addEventListener('click', run);
+  window.addEventListener('pagehide', stop);
+  window.addEventListener('beforeunload', stop);
+  run();
+})();
+</script>
+</body>
+</html>

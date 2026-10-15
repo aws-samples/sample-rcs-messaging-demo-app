@@ -1,0 +1,5 @@
+{
+  "_comment": "Hand-maintained major.minor.patch for each half of the demo. The fourth segment shown in the dashboard status bar is computed, not stored: it is the number of commits that have touched that half (see scripts/version.mjs), so it advances by itself and nobody has to remember to bump a build number.",
+  "frontend": "1.0.0",
+  "backend": "1.0.0"
+}
