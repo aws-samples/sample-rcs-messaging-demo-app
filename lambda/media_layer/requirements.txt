@@ -16,5 +16,5 @@
 # Pinned to exact, tested versions for reproducible builds. Pillow decodes
 # untrusted files (webview uploads, inbound RCS media), so check these pins
 # with `pip-audit --no-deps -r lambda/media_layer/requirements.txt`.
-Pillow==12.3.0
+Pillow==13.0.0
 pillow-heif==1.8.0
