@@ -35,6 +35,10 @@ jobs:
         with:
           # The Lambdas' Python minor version (PY_TAG in cdk/lib/rcs-demo-stack.ts).
           python-version: '3.14'
+      # The check imports lambda/common.py, which reads content/brand.md with
+      # PyYAML. Install the Lambda layer's pinned versions.
+      - name: Install the Lambda layer dependencies
+        run: python3 -m pip install -r lambda/layer/requirements.txt
       - name: Check the RCS feature registry
         run: python3 scripts/check-rcs-registry.py
 
