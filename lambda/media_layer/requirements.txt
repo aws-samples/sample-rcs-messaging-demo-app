@@ -22,5 +22,5 @@
 # that the binary wheels are GPLv2 as a result. Pillow's wheels bundle shared
 # libraries under their own licenses too. Review these before you share the
 # built layer or a deployed Lambda package with anyone else. See NOTICE.
-Pillow==12.3.0
+Pillow==13.0.0
 pillow-heif==1.8.0
