@@ -7,7 +7,7 @@ provider or health-system names, which are trademarks of their owners. Edit
 freely.
 
 ## Primary Care
-- Dr. Rachel Torres — Internal Medicine, 800 Fairmount Ave
+- Dr. Rachel Torres — Internal Medicine, 800 Walnut St, Suite 300
 - Dr. James Park — Family Medicine, 1500 Ludlow St
 
 ## Specialists

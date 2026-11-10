@@ -1,0 +1,193 @@
+<!doctype html>
+<!--
+  Identity Capture — secure ID photo upload (AnyBuild vignette).
+
+  Opened from the Identity Capture card (lambda/flows/identity_capture.py) in an
+  RCS webview. Photographs each side or page of an ID in order and uploads it
+  straight to private S3 with a presigned URL, the same pipeline as
+  upload-insurance-card.html (the file never travels through the message thread).
+
+  It differs from that page on purpose:
+    - it walks through the sides the chosen ID type needs (the front of a
+      passport; the front and back of a USA driver's license) instead of
+      taking one file;
+    - it files each upload with the use case, the ID type, the side and a
+      capture id made up once per page visit, so the dashboard can show the
+      sides captured together (dashboard_handler.get_latest_media_for_demo);
+    - it never shows the image back. When a step is processed it shows what the
+      document is ("What we see: ..."), so a captured ID is not left on screen;
+    - everything it prints comes from the URL or the server and is set with
+      textContent, never as markup.
+
+  DEMO ONLY. This page has no sign-in and does not verify the document. Do not
+  upload a real ID. See lambda/flows/identity_capture.py.
+
+  URL parameters:
+    ph     Conversation reference (phone hash) the upload is filed under.
+    type   ID type id from content/construction.md ("passport" or "license").
+    doc    Document name, shown in the header ("USA driver's license").
+    steps  Pipe-separated step labels, in order ("Front of license|Back of license").
+    sides  Pipe-separated sides, one per label ("front|back"). The upload API
+           accepts only the sides content/construction.md lists for the type.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="referrer" content="no-referrer" />
+<meta name="robots" content="noindex, nofollow" />
+<title>{{BRAND_NAME}} — Identity Capture</title>
+<style>
+  :root { --accent: {{ACCENT}}; --ok: #146b4a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1a1a1a; background: #f6f5f3; }
+  header { background: var(--accent); color: #fff; padding: 20px 18px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; opacity: .9; font-size: 13px; }
+  main { padding: 18px; max-width: 640px; margin: 0 auto; }
+  .note { color: #5a5a62; font-size: 13px; margin: 0 0 14px; }
+  .warn { background: #fff7e8; border: 1px solid #f0d9a8; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 14px; }
+  .step { background: #fff; border: 1px solid #e6e3df; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .step.locked { opacity: .5; pointer-events: none; }
+  .step.done { border-color: var(--ok); background: #eef7f2; }
+  .step h2 { margin: 0 0 8px; font-size: 15px; display: flex; justify-content: space-between; gap: 8px; }
+  .step .tick { color: var(--ok); font-weight: 700; }
+  input[type=file] { display: none; }
+  .pick { display: block; text-align: center; padding: 12px; border-radius: 10px; border: 2px dashed #cfcac3;
+          background: #faf9f7; color: #44444c; font-size: 15px; cursor: pointer; }
+  .pick.has-file { border-style: solid; border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .go { margin-top: 10px; width: 100%; padding: 12px; border: none; border-radius: 10px; background: var(--accent);
+        color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+  .go:disabled { opacity: .4; cursor: not-allowed; }
+  .status { margin-top: 10px; font-size: 14px; color: #44444c; }
+  .status.error { color: #b3261e; }
+  .what { margin-top: 6px; font-size: 13px; color: #5a5a62; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #cfcac3; border-top-color: var(--accent);
+             border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #alldone { display: none; background: #fff; border: 2px solid var(--ok); border-radius: 10px; padding: 16px; text-align: center; }
+  #alldone h2 { margin: 0 0 6px; color: var(--ok); font-size: 17px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Identity Capture</h1>
+  <p>{{BRAND_NAME}} · Encrypted direct upload</p>
+</header>
+<main>
+  <div class="warn"><strong>Demo only — do not upload a real ID.</strong> This page has no sign-in and does not
+    verify the document. Use a sample image.</div>
+  <p class="note">Each photo uploads directly and securely. It never travels through the text conversation, and it is not shown back to you.</p>
+  <div id="bad" class="warn" hidden>This link is incomplete. Open it again from your message thread.</div>
+  <div id="steps"></div>
+  <div id="alldone" role="status" aria-live="polite">
+    <h2>All set</h2>
+    <p class="note" style="margin:0">We received everything we need. You can close this page.</p>
+  </div>
+</main>
+<script>
+(function () {
+  "use strict";
+  var q = new URLSearchParams(location.search);
+  var phoneHash = q.get("ph") || "";
+  var docName = (q.get("doc") || "").slice(0, 60);
+  var idType = q.get("type") || "";
+  var labels = (q.get("steps") || "").split("|").map(function (s) { return s.slice(0, 60); }).filter(Boolean).slice(0, 2);
+  var sides = (q.get("sides") || "").split("|").filter(function (s) { return s === "front" || s === "back"; });
+  if (docName) document.getElementById("title").textContent = docName;
+  if (!phoneHash || !/^[a-z]{1,20}$/.test(idType) || !labels.length || sides.length !== labels.length) {
+    document.getElementById("bad").hidden = false; return;
+  }
+  // One id per opening of this page, so the uploads made in this visit are
+  // shown together and never paired with a side from an earlier visit.
+  var captureId = Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(8)), function (b) {
+    return ("0" + b.toString(16)).slice(-2);
+  }).join("");
+
+  var host = document.getElementById("steps");
+  var steps = labels.map(function (label, i) {
+    var el = document.createElement("section");
+    el.className = "step" + (i ? " locked" : "");
+    var h = document.createElement("h2");
+    var t = document.createElement("span"); t.textContent = (i + 1) + ". " + label;
+    var tick = document.createElement("span"); tick.className = "tick";
+    h.appendChild(t); h.appendChild(tick);
+    var pick = document.createElement("label"); pick.className = "pick"; pick.textContent = "Choose a photo";
+    var input = document.createElement("input"); input.type = "file";
+    input.accept = "image/jpeg,image/jpg,image/png,image/heic,image/heif";
+    var id = "f" + i; input.id = id; pick.htmlFor = id;
+    var go = document.createElement("button"); go.className = "go"; go.type = "button"; go.textContent = "Upload"; go.disabled = true;
+    var status = document.createElement("div"); status.className = "status";
+    var what = document.createElement("div"); what.className = "what";
+    el.appendChild(h); el.appendChild(pick); el.appendChild(input); el.appendChild(go); el.appendChild(status); el.appendChild(what);
+    host.appendChild(el);
+    var s = { el: el, tick: tick, pick: pick, input: input, go: go, status: status, what: what, file: null, done: false };
+    input.addEventListener("change", function () {
+      s.file = input.files[0] || null;
+      if (s.file) { pick.textContent = s.file.name.slice(0, 40); pick.classList.add("has-file"); go.disabled = false; }
+    });
+    go.addEventListener("click", function () { upload(i); });
+    return s;
+  });
+
+  function setStatus(s, msg, isError, spin) {
+    s.status.textContent = "";
+    if (spin) { var sp = document.createElement("span"); sp.className = "spinner"; s.status.appendChild(sp); }
+    s.status.appendChild(document.createTextNode(msg));
+    s.status.className = "status" + (isError ? " error" : "");
+  }
+
+  async function upload(i) {
+    var s = steps[i];
+    if (!s.file) return;
+    s.go.disabled = true;
+    try {
+      setStatus(s, "Requesting secure upload link…", false, true);
+      var pr = await fetch("/api/uploads/presign", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone_hash: phoneHash, content_type: s.file.type,
+          vignette: "identity_capture", id_type: idType, side: sides[i], capture_id: captureId,
+        }),
+      });
+      var presign = await pr.json();
+      if (presign.error) throw new Error(presign.error);
+      setStatus(s, "Uploading…", false, true);
+      var put = await fetch(presign.put_url, { method: "PUT", headers: { "Content-Type": s.file.type }, body: s.file });
+      if (!put.ok) throw new Error("Upload failed (" + put.status + ")");
+      setStatus(s, "Checking the photo…", false, true);
+      await poll(s, i, presign.upload_id);
+    } catch (err) {
+      setStatus(s, "Something went wrong: " + err.message, true);
+      s.go.disabled = false;
+    }
+  }
+
+  async function poll(s, i, uploadId) {
+    for (var n = 0; n < 30; n++) {
+      await new Promise(function (r) { setTimeout(r, 2000); });
+      var resp = await fetch("/api/uploads/" + encodeURIComponent(phoneHash) + "/" + encodeURIComponent(uploadId) + "/status");
+      var data = await resp.json();
+      if (data.status === "READY") {
+        s.done = true; s.el.classList.add("done"); s.tick.textContent = "✓ Captured";
+        s.pick.style.display = "none"; s.go.style.display = "none";
+        setStatus(s, "Received. The photo is stored securely and is not shown here.");
+        if (data.classification) s.what.textContent = "What we see: " + data.classification;
+        // Unlock the next step, or finish.
+        var next = steps[i + 1];
+        if (next) next.el.classList.remove("locked");
+        else document.getElementById("alldone").style.display = "block";
+        return;
+      }
+      if (data.status === "FAILED") {
+        setStatus(s, "We couldn't process that photo" + (data.error ? ": " + data.error : "") + ".", true);
+        s.go.disabled = false; return;
+      }
+    }
+    setStatus(s, "Still processing. Check back in a moment.", true);
+    s.go.disabled = false;
+  }
+})();
+</script>
+</body>
+</html>

@@ -7,7 +7,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import Spinner from '@cloudscape-design/components/spinner';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import type { DefaultMeetingSession } from 'amazon-chime-sdk-js';
-import { api, VideoJoin } from '../api';
+import type { ApiClient, VideoJoin } from '../api';
 
 /**
  * EXPERIMENTAL. The clinician's half of the video visit: a Chime SDK JS client
@@ -48,8 +48,13 @@ export default function VideoVisitModal({
   phoneLabel,
   onDismiss,
 }: {
-  /** The visit token from POST /api/video/start. Null when the modal is closed. */
-  visit: string | null;
+  /**
+   * The visit token from POST /api/video/start, with the API client of the
+   * session that started it. Null when the modal is closed. Every call this
+   * modal makes goes through that client (captured at first open), so the visit
+   * stays bound to the brand that started it, including the unmount teardown.
+   */
+  visit: { token: string; client: ApiClient } | null;
   phoneLabel: string;
   onDismiss: () => void;
 }) {
@@ -72,9 +77,18 @@ export default function VideoVisitModal({
   // by the parent on dismiss.
   const joinedTokenRef = useRef<string | null>(null);
   const remoteTileRef = useRef<number | null>(null);
+  // The client of the brand that started the visit, captured at first open for
+  // each token. Join, status, ping and end all use it, so a later change of the
+  // caller's client (or an unmount after a brand switch) cannot redirect them.
+  const clientRef = useRef<{ token: string; client: ApiClient } | null>(null);
+  if (visit && clientRef.current?.token !== visit.token) {
+    clientRef.current = { token: visit.token, client: visit.client };
+  }
+  const token = visit?.token ?? null;
 
   const teardown = useCallback(() => {
-    const token = joinedTokenRef.current;
+    const joined = joinedTokenRef.current;
+    const client = clientRef.current?.client;
     joinedTokenRef.current = null;
     const session = sessionRef.current;
     sessionRef.current = null;
@@ -86,7 +100,7 @@ export default function VideoVisitModal({
     }
     // Fire-and-forget: this runs from unmount and from dismiss, where there is
     // nobody left to show a failure to. The server-side teardown is idempotent.
-    if (token) api.videoEnd(token).catch(() => {});
+    if (joined && client) client.videoEnd(joined).catch(() => {});
   }, []);
 
   useEffect(() => teardown, [teardown]);
@@ -102,26 +116,28 @@ export default function VideoVisitModal({
   // saying so, and one small GET every five seconds while a modal is open is not
   // worth optimising.
   useEffect(() => {
-    if (!visit) return;
+    const client = clientRef.current?.client;
+    if (!token || !client) return;
     let live = true;
     const tick = async () => {
       try {
-        const s = await api.videoStatus(visit);
+        const s = await client.videoStatus(token);
         if (!live) return;
         setMemberPresent(!!s.member);
       } catch {
         // Presence is advisory. A failed poll must not surface an error over a
         // call that is working, so it is dropped and the next tick retries.
       }
-      if (joinedTokenRef.current) api.videoPing(visit).catch(() => {});
+      if (joinedTokenRef.current) client.videoPing(token).catch(() => {});
     };
     tick();
     const id = setInterval(tick, 5000);
     return () => { live = false; clearInterval(id); };
-  }, [visit]);
+  }, [token]);
 
   async function join() {
-    if (!visit) return;
+    const client = clientRef.current?.client;
+    if (!token || !client) return;
     setPhase('joining');
     setError('');
     setNote('');
@@ -148,7 +164,7 @@ export default function VideoVisitModal({
       return setError(`Could not load the video client: ${e}`);
     }
     try {
-      material = await api.videoJoin(visit);
+      material = await client.videoJoin(token);
     } catch (e) {
       setPhase('idle');
       return setError(`Could not reach the visit service: ${e}`);
@@ -165,7 +181,7 @@ export default function VideoVisitModal({
       new chime.DefaultDeviceController(logger),
     );
     sessionRef.current = session;
-    joinedTokenRef.current = visit;
+    joinedTokenRef.current = token;
     const av = session.audioVideo;
 
     av.addObserver({
@@ -282,7 +298,7 @@ export default function VideoVisitModal({
 
   return (
     <Modal
-      visible={!!visit}
+      visible={!!token}
       onDismiss={dismiss}
       size="large"
       header="Video visit — clinician view"

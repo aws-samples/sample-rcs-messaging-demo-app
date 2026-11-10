@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Table from '@cloudscape-design/components/table';
 import CollectionPreferences from '@cloudscape-design/components/collection-preferences';
 import Header from '@cloudscape-design/components/header';
@@ -16,8 +16,9 @@ import Alert from '@cloudscape-design/components/alert';
 import Modal from '@cloudscape-design/components/modal';
 import type { CollectionPreferencesProps } from '@cloudscape-design/components/collection-preferences';
 import { QRCodeSVG } from 'qrcode.react';
-import { api, Brand, Tester } from '../api';
-import { normalizePhone, getDeepLink, setDeepLink, deepLinkBody, withDeepLinkBody } from '../config';
+import type { Brand, Tester } from '../api';
+import { normalizePhone, deepLinkBody, withDeepLinkBody } from '../config';
+import { isTrackedLoadError, useApi, useSession } from '../session/SessionContext';
 
 // Column order shown by default (also the order options appear in the
 // preferences dialog). "target" is pinned always-visible since hiding it
@@ -67,20 +68,34 @@ export default function Recipients({
   const [contentDisplay, setContentDisplay] =
     useState<ReadonlyArray<CollectionPreferencesProps.ContentDisplayItem>>(DEFAULT_CONTENT_DISPLAY);
 
-  const load = () =>
-    api.getTestersWithMetrics()
-      .then(setTesters)
-      .catch((e) => onError(String(e)))
-      .finally(() => setLoading(false));
+  const api = useApi();
+  const { track } = useSession();
 
-  useEffect(() => { load(); }, []);
+  // Only the first load counts toward the switch's loading state; later reloads
+  // (after a rename, add or remove) are not tracked.
+  const testersTracked = useRef(false);
+  const load = () => {
+    let p = api.getTestersWithMetrics();
+    if (!testersTracked.current) {
+      testersTracked.current = true;
+      p = track(p, 'recipients');
+    }
+    return p
+      .then(setTesters)
+      // A tracked failure was already raised (labelled) by the session.
+      .catch((e) => { if (!isTrackedLoadError(e)) onError(String(e)); })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [api]);
 
   useEffect(() => {
     // Silent on failure: without it the count simply loses its denominator.
-    api.getRcsFeatures()
+    track(api.getRcsFeatures(), 'RCS features')
       .then((r) => setCap(r.limits.find((l) => l.key === 'testDevicesPerAgent')?.value ?? null))
       .catch(() => {});
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
 
   const atCap = cap !== null && testers.length >= cap;
 
@@ -342,7 +357,7 @@ export default function Recipients({
               label="Delivered"
               teaches="RCS confirms delivery from the recipient's device, not from the carrier network the way an SMS DLR does — which is also the billing basis: you are charged only for messages confirmed delivered to a device. The RCS_DELIVERED event carries a messageStatus of DELIVERED, PENDING, UNDELIVERABLE or REJECTED; read messageStatus for the outcome."
               docUrl="https://docs.aws.amazon.com/sms-voice/latest/userguide/rcs-events.html#rcs-events-delivery-status"
-              reason="Per-recipient delivery comes from RCS_DELIVERED events. On a testing agent, delivery events appear once the agent is launched in a country. This was tested with the destination subscribed to RCS_ALL and the agent set to ALL. The RCSMessagesDelivered CloudWatch metric counts deliveries in aggregate."
+              reason="Per-recipient delivery comes from RCS_DELIVERED events (and TEXT_DELIVERED or MEDIA_DELIVERED for a fallback SMS or MMS), usually within seconds of the send. The RCSMessagesDelivered CloudWatch metric counts deliveries in aggregate, so it is the cross-check if this column trails Sent."
             />
           ),
           // Wider than the plain counters: the header carries an ⓘ popover
@@ -358,7 +373,7 @@ export default function Recipients({
               label="Read"
               teaches="Read rate is READ divided by DELIVERED — the two columns side by side. What you see here is the member's client reporting; SendRcsMessage carries message content only, so this sample sends no typing or read signals of its own (agent-initiated ones are documented as planned). The member's own typing is delivered inbound as RCS_TYPING; this sample records it as an indicator line in the conversation transcript when it arrives."
               docUrl="https://docs.aws.amazon.com/sms-voice/latest/userguide/rcs-events.html#rcs-events-read-receipts"
-              reason="Read receipt (RCS_READ). On a testing agent, read events appear once the agent is launched in a country, as with Delivered. Even once launched, not every messaging client reports read status, so treat it as a relative engagement signal rather than an exact count."
+              reason="Read receipt (RCS_READ), sent when the recipient opens the message. Not every messaging client reports read status (on iOS it is a per-recipient setting, off by default), so treat it as a relative engagement signal rather than an exact count."
             />
           ),
           minWidth: 105,
@@ -379,7 +394,7 @@ export default function Recipients({
               label="Fell back to SMS"
               teaches="SendRcsMessage fallback is opt-in, not automatic: it fires only when you pass a FallbackConfiguration, and then only if the RCS leg fails or TimeToLive expires without a delivery confirmation. A count here means the member was still reached — as plain SMS, without the card. The same message also counts under Failed, because the RCS attempt genuinely did fail."
               docUrl="https://docs.aws.amazon.com/sms-voice/latest/userguide/rcs-fallback-per-message.html"
-              reason="Comes from RCS_FALLEN_BACK_TO_SMS on the configuration set's event destination. On a testing agent these events appear once the agent is launched in a country, as with Delivered and Read. It also needs the stack deployed with an SMS origination identity, since a FallbackConfiguration without one is a ValidationException."
+              reason="Comes from RCS_FALLEN_BACK_TO_SMS on the configuration set's event destination; the fallback SMS's own delivery then counts in Delivered. It needs the stack deployed with an SMS origination identity, since a FallbackConfiguration without one is a ValidationException."
             />
           ),
           minWidth: 170,
@@ -441,6 +456,7 @@ function RemoveRecipientModal({
   onDismiss: () => void;
   onConfirm: () => void;
 }) {
+  const { multi, label } = useSession();
   return (
     <Modal
       visible={!!tester}
@@ -457,6 +473,7 @@ function RemoveRecipientModal({
     >
       {tester && (
         <SpaceBetween size="s">
+          {multi && <Box>Brand: <b>{label}</b></Box>}
           <Box>
             Unregister <b>{tester.name || 'this recipient'}</b> (
             <Box variant="code" display="inline">{tester.phone}</Box>) as a verified test device and
@@ -490,13 +507,14 @@ function RemoveRecipientModal({
 // exist because each is a way to get a QR code that scans fine and then does
 // nothing.
 function InboundDeepLink({ keyword }: { keyword: string }) {
-  const [link, setLink] = useState(getDeepLink());
-  const [draft, setDraft] = useState(getDeepLink());
-  const [editing, setEditing] = useState(!getDeepLink());
+  const { storage } = useSession();
+  const [link, setLink] = useState(() => storage.getDeepLink());
+  const [draft, setDraft] = useState(() => storage.getDeepLink());
+  const [editing, setEditing] = useState(() => !storage.getDeepLink());
 
   function save(url: string) {
     const trimmed = url.trim();
-    setDeepLink(trimmed);
+    storage.setDeepLink(trimmed);
     setLink(trimmed);
     setDraft(trimmed);
     setEditing(!trimmed);
@@ -591,9 +609,9 @@ function InboundDeepLink({ keyword }: { keyword: string }) {
 }
 
 // Column header for a metric that comes from an async platform event rather
-// than from the synchronous SendRcsMessage result. A value that trails "Sent",
-// or stays at zero on a testing agent, is expected, and the tooltip says which
-// case applies. `teaches` explains what the RCS event behind the column means:
+// than from the synchronous SendRcsMessage result. A value that trails "Sent"
+// is expected (events arrive seconds to minutes later, and not every client
+// reports read status), and the tooltip says why. `teaches` explains what the RCS event behind the column means:
 // the column is the only place in the dashboard where delivery semantics are
 // visible, so it is the right place to say that RCS confirms delivery from the
 // device itself and bills on that confirmation. `docUrl` links the AWS
@@ -652,6 +670,7 @@ function AddRecipient({
   atCap: boolean;
   cap: number | null;
 }) {
+  const api = useApi();
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');

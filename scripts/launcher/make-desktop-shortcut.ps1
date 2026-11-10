@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Create a double-click Desktop launcher (Windows) for the AnyHealth dashboard.
+  Create a double-click Desktop launcher (Windows) for the demo dashboard.
 
 .DESCRIPTION
   Writes a Desktop shortcut (.lnk) that runs scripts\launcher\run-dev.bat from
@@ -28,21 +28,57 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot  = (Resolve-Path (Join-Path $ScriptDir '..\..')).Path
 $Runner    = Join-Path $RepoRoot 'scripts\launcher\run-dev.bat'
 $BrandMd   = Join-Path $RepoRoot 'content\brand.md'
-$Logo      = Join-Path $RepoRoot 'media\logo.png'
 
 if (-not (Test-Path $Runner)) { throw "Runner not found at $Runner" }
 
-# --- Read brandName from content\brand.md frontmatter (no hardcoding) ------
-function Get-Frontmatter([string]$key) {
+# --- Resolve the default brand from the content\brand.md catalog -----------
+# brand.md holds a four-brand catalog: a top-level `defaultBrand` scalar and a
+# `brands:` map keyed by id. This launcher does not know which brand was
+# deployed, so it uses the default brand's identity (name, accent, per-brand
+# logo) for the shortcut. Nothing is hardcoded; the "AnyHealth" fallback is
+# last-resort only, if the file cannot be read.
+
+# A top-level scalar such as `defaultBrand: "anyhealth"`.
+function Get-TopScalar([string]$key) {
   if (-not (Test-Path $BrandMd)) { return $null }
   $line = Select-String -Path $BrandMd -Pattern "^\s*$key\s*:" | Select-Object -First 1
   if (-not $line) { return $null }
   $v = $line.Line -replace "^\s*$key\s*:\s*", '' -replace '\s*#.*$', ''
   return $v.Trim().Trim('"').Trim("'")
 }
-$BrandName = Get-Frontmatter 'brandName'
+
+# A sub-key of one brand's block: walk from the `  <id>:` line to the next
+# 2-space-indented sibling, reading `    <key>:`. A quoted value may contain
+# "#" (a hex color), so a quoted span is taken verbatim; a bare value has any
+# trailing " # comment" stripped.
+function Get-BrandKey([string]$brand, [string]$key) {
+  if (-not (Test-Path $BrandMd)) { return $null }
+  $inBlk = $false
+  foreach ($raw in Get-Content -LiteralPath $BrandMd) {
+    if ($raw -match ("^  " + [regex]::Escape($brand) + ":\s*$")) { $inBlk = $true; continue }
+    if ($inBlk) {
+      if ($raw -match '^  [A-Za-z_]' -and $raw -notmatch '^    ') { break }
+      if ($raw -match ("^    " + [regex]::Escape($key) + ":\s*(.*)$")) {
+        $v = $Matches[1]
+        if ($v -match '^"([^"]*)"') { return $Matches[1] }
+        elseif ($v -match "^'([^']*)'") { return $Matches[1] }
+        else { return ($v -replace '\s+#.*$', '').Trim() }
+      }
+    }
+  }
+  return $null
+}
+
+$DefaultBrand = Get-TopScalar 'defaultBrand'
+if ([string]::IsNullOrWhiteSpace($DefaultBrand)) { $DefaultBrand = 'anyhealth' }
+
+$BrandName = Get-BrandKey $DefaultBrand 'brandName'
 if ([string]::IsNullOrWhiteSpace($BrandName)) { $BrandName = 'AnyHealth' }
 $AppName = "$BrandName Dashboard"
+
+$LogoRel = Get-BrandKey $DefaultBrand 'logoImage'
+if ([string]::IsNullOrWhiteSpace($LogoRel)) { $LogoRel = "media/$DefaultBrand/logo.png" }
+$Logo = Join-Path $RepoRoot ($LogoRel -replace '/', '\')
 
 Write-Host "Repo:   $RepoRoot"
 Write-Host "Brand:  $BrandName"

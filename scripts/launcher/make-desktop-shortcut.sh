@@ -1,6 +1,11 @@
 #!/bin/bash
 #
-# Create a double-click Desktop launcher (macOS) for the AnyHealth dashboard.
+# Create a double-click Desktop launcher (macOS) for the demo dashboard.
+#
+# The demo ships a four-brand catalog in content/brand.md; this launcher is a
+# local dev convenience, so it resolves the DEFAULT brand (defaultBrand in the
+# frontmatter) and uses that brand's name, accent color and per-brand logo
+# (media/<id>/logo.png) for the shortcut label and icon.
 #
 # Builds a small .app bundle on your Desktop whose icon comes from your brand
 # (media/logo.png on the brand accent color) and whose only job is to run
@@ -26,22 +31,56 @@ SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNNER="$REPO_ROOT/scripts/launcher/run-dev.sh"
 BRAND_MD="$REPO_ROOT/content/brand.md"
-LOGO="$REPO_ROOT/media/logo.png"
 
 [ -f "$RUNNER" ] || { echo "ERROR: runner not found at $RUNNER"; exit 1; }
 chmod +x "$RUNNER"
 
-# --- Read brand name + accent color from content/brand.md (no hardcoding) --
-read_frontmatter() {
-  # $1 = key. Pulls value from YAML frontmatter, strips quotes and trailing comments.
+# --- Resolve the default brand from the content/brand.md catalog -----------
+# brand.md holds a four-brand catalog: a top-level `defaultBrand` scalar and a
+# `brands:` map keyed by id, each block indented beneath it. This launcher does
+# not know which brand was deployed, so it uses the default brand's identity for
+# the shortcut label and icon. Nothing is hardcoded: the values come from the
+# resolved block, with last-resort fallbacks only if the file cannot be read.
+
+# A top-level scalar (e.g. `defaultBrand: "anyhealth"`), stripped of quotes/comments.
+read_top_scalar() {
   grep -E "^[[:space:]]*$1:" "$BRAND_MD" 2>/dev/null | head -1 \
     | sed -E "s/^[[:space:]]*$1:[[:space:]]*//; s/[[:space:]]*#.*$//; s/^\"//; s/\"[[:space:]]*$//; s/^'//; s/'[[:space:]]*$//"
 }
 
-BRAND_NAME="$(read_frontmatter brandName)"
+# A sub-key of one brand's block: scan from the `  <id>:` line to the next
+# sibling (a line indented by the same two spaces), and read `    <key>:`.
+read_brand_key() {
+  local brand="$1" key="$2"
+  awk -v brand="$brand" -v key="$key" '
+    $0 ~ ("^  " brand ":[[:space:]]*$") { inblk=1; next }
+    inblk {
+      if ($0 ~ /^  [A-Za-z_]/ && $0 !~ /^    /) { exit }
+      if ($0 ~ ("^    " key ":")) {
+        line=$0
+        sub(("^    " key ":[[:space:]]*"), "", line)
+        # A quoted value may legitimately contain "#" (e.g. a hex color), so
+        # take the quoted span verbatim when present; otherwise the value is a
+        # bare token and a trailing " # comment" is stripped.
+        if (line ~ /^"[^"]*"/) { sub(/^"/, "", line); sub(/".*$/, "", line) }
+        else if (line ~ /^'"'"'[^'"'"']*'"'"'/) { sub(/^'"'"'/, "", line); sub(/'"'"'.*$/, "", line) }
+        else { sub(/[[:space:]]+#.*$/, "", line); sub(/[[:space:]]+$/, "", line) }
+        print line; exit
+      }
+    }
+  ' "$BRAND_MD" 2>/dev/null
+}
+
+DEFAULT_BRAND="$(read_top_scalar defaultBrand)"
+[ -z "$DEFAULT_BRAND" ] && DEFAULT_BRAND="anyhealth"
+
+BRAND_NAME="$(read_brand_key "$DEFAULT_BRAND" brandName)"
 [ -z "$BRAND_NAME" ] && BRAND_NAME="AnyHealth"
-ACCENT="$(read_frontmatter accentColor)"
+ACCENT="$(read_brand_key "$DEFAULT_BRAND" accentColor)"
 [ -z "$ACCENT" ] && ACCENT="#0B6E6F"
+LOGO_REL="$(read_brand_key "$DEFAULT_BRAND" logoImage)"
+[ -z "$LOGO_REL" ] && LOGO_REL="media/$DEFAULT_BRAND/logo.png"
+LOGO="$REPO_ROOT/$LOGO_REL"
 
 APP_NAME="$BRAND_NAME Dashboard"
 DEST_DIR="${DEST_DIR:-$HOME/Desktop}"
@@ -66,7 +105,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key>
     <string>$APP_NAME</string>
     <key>CFBundleIdentifier</key>
-    <string>com.anyhealth.dashboard.launcher</string>
+    <string>com.rcsdemo.dashboard.launcher</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>

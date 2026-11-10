@@ -5,7 +5,7 @@ import Box from '@cloudscape-design/components/box';
 import Spinner from '@cloudscape-design/components/spinner';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import ExpandableSection from '@cloudscape-design/components/expandable-section';
-import { api } from '../api';
+import { useApi } from '../session/SessionContext';
 
 /**
  * The video-visit counterpart of PhonePreviewPopover's "Device preview": open the
@@ -32,6 +32,7 @@ import { api } from '../api';
  *    modal would leave a meeting billing until Chime's own idle timeout.
  */
 export default function VideoPreviewModal() {
+  const api = useApi();
   const [open, setOpen] = useState(false);
   const [visit, setVisit] = useState('');
   const [error, setError] = useState('');

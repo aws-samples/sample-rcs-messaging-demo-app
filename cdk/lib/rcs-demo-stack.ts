@@ -26,7 +26,7 @@ import { HttpLambdaAuthorizer, HttpLambdaResponseType } from 'aws-cdk-lib/aws-ap
 import { Provider } from 'aws-cdk-lib/custom-resources';
 import { DeployInputs, LAMBDA_DIR, MEDIA_DIR, SECURE_DOCS_DIR } from './config';
 
-export interface AnyHealthStackProps extends StackProps {
+export interface RcsDemoStackProps extends StackProps {
   inputs: DeployInputs;
 }
 
@@ -66,15 +66,15 @@ function backendVersion(): string {
   }
 }
 
-export class AnyHealthStack extends Stack {
-  constructor(scope: Construct, id: string, props: AnyHealthStackProps) {
+export class RcsDemoStack extends Stack {
+  constructor(scope: Construct, id: string, props: RcsDemoStackProps) {
     super(scope, id, props);
     const { inputs } = props;
     const prefix = inputs.prefix;
 
     // ── Data ────────────────────────────────────────────────────────────
     const tableKey = new kms.Key(this, 'TableKey', {
-      description: `${prefix} demo — DynamoDB customer-managed key`,
+      description: `${prefix} demo - DynamoDB customer-managed key`,
       enableKeyRotation: true,
       removalPolicy: RemovalPolicy.DESTROY,
     });
@@ -282,11 +282,34 @@ export class AnyHealthStack extends Stack {
     );
 
     // ── Inbound SNS topic (RCS inbound + status events land here) ───────
-    // AWS-managed SNS key: EUM/RCS service principals can decrypt with it
-    // without needing custom key-policy grants, unlike a customer-managed key.
+    // Encrypted with a customer managed key, not the AWS managed alias/aws/sns.
+    // Two publishers write to this topic. Two-way inbound messages arrive through
+    // twoWayRole below, a role in this account, which grantPublish lets use the
+    // key. The configuration set's event destination (delivery, read, failed and
+    // the other outbound status events) publishes as the sms-voice service
+    // principal itself. The AWS managed key's policy does not allow that and
+    // cannot be edited, so with it every status event was dropped before it
+    // reached the topic, with no error anywhere: the Recipients tab then showed
+    // sends but never a delivery. The statement on this key is the one AWS
+    // documents for an encrypted event-destination topic.
+    // https://docs.aws.amazon.com/sms-voice/latest/userguide/configuration-sets-sns-creating-role.html
+    const inboundKey = new kms.Key(this, 'InboundTopicKey', {
+      description: `${prefix} demo - inbound SNS topic customer-managed key`,
+      enableKeyRotation: true,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    inboundKey.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'AllowEndUserMessagingToPublishEvents',
+        principals: [new iam.ServicePrincipal('sms-voice.amazonaws.com')],
+        actions: ['kms:GenerateDataKey*', 'kms:Decrypt'],
+        resources: ['*'],
+        conditions: fromThisAccount,
+      })
+    );
     const inbound = new sns.Topic(this, 'Inbound', {
       topicName: `${prefix}-demo-inbound`,
-      masterKey: kms.Alias.fromAliasName(this, 'SnsManagedKey', 'alias/aws/sns'),
+      masterKey: inboundKey,
     });
     inbound.addToResourcePolicy(
       new iam.PolicyStatement({
@@ -432,6 +455,11 @@ export class AnyHealthStack extends Stack {
     const configSetName = `${prefix}-demo-events`;
 
     const commonEnv: Record<string, string> = {
+      // The single selected brand id (a key in the content/brand.md catalog).
+      // common.py reads this as os.environ["BRAND"] so every runtime accessor
+      // resolves the selected brand's identity block. One brand per deploy —
+      // the stack registers exactly one agent / one config set, no loop.
+      BRAND: inputs.brandId,
       DYNAMODB_TABLE: table.tableName,
       S3_BUCKET: bucket.bucketName,
       S3_INBOUND_MEDIA_PREFIX: INBOUND_MEDIA_PREFIX,
@@ -1291,14 +1319,13 @@ export class AnyHealthStack extends Stack {
         RcsAgentId: inputs.rcsAgentId,
         ConfigurationSetName: configSetName,
         EventDestinationName: `${prefix}-events-sns`,
-        // RCS_ALL is the RCS subscription described in the RCS events guide
-        // (see _ensure_event_destination in eum_wiring.py). On a testing agent,
-        // delivery and read events are not published to the configuration set
-        // destination; they appear once the agent is launched in a country (the
-        // RCSMessagesDelivered metric still counts deliveries). That is why the
-        // Recipients tab's Delivered/Read columns stay at zero on a testing
-        // agent.
-        MatchingEventTypes: ['RCS_ALL'],
+        // Every RCS, SMS (TEXT_*) and MMS (MEDIA_*) status event. RCS_ALL alone
+        // misses the SMS a FallbackConfiguration sends when the RCS leg fails, so
+        // the fallback's own delivery or failure would never be seen. VOICE_ALL is
+        // left out: this stack places no calls. See _ensure_event_destination in
+        // eum_wiring.py, and the topic key above, without which none of these
+        // events reach the topic.
+        MatchingEventTypes: ['RCS_ALL', 'TEXT_ALL', 'MEDIA_ALL'],
         // The agent's own event subscription, which is what forwards RCS events
         // to the two-way topic. Independent of MatchingEventTypes above.
         TwoWayRcsEventsEnabled: ['ALL'],

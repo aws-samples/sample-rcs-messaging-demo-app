@@ -43,13 +43,22 @@ Settings tab shows your account ID, so redact it in screenshots.
 # Infrastructure typechecks and synthesizes.
 # `.deploy/agent.json` is gitignored, so on a fresh clone pass the two required
 # inputs on the command line — synth needs them but the values don't have to be
-# real, since nothing is deployed.
+# real, since nothing is deployed. The agent id must still have the real form
+# (rcs- plus 32 hex digits), and skipAgentCheck stops synth from looking the
+# placeholder up in AWS. Repeat with -c brand=<id> for each brand you changed.
 cd cdk && npm ci
-npx cdk synth --quiet -c rcsAgentId=rcs-0000000000000000 -c region=us-east-1
+npx cdk synth --quiet -c rcsAgentId=rcs-00000000000000000000000000000000 -c region=us-east-1 -c skipAgentCheck=true
+# Offline tests for scripts/deploy.mjs and the agent scripts (AWS is faked)
+cd .. && node --test 'scripts/test/*.test.mjs'
+# The RCS feature registry against the code
+python3 scripts/check-rcs-registry.py
 
 # Dashboard typechecks
-cd ../web && npm ci && npm run typecheck
+cd web && npm ci && npm run typecheck
 ```
+
+The GitHub Actions workflow (`.github/workflows/rcs-content-checks.yml`) runs all
+of these on every push and pull request, with `cdk synth` once per brand.
 
 If you changed anything under `lambda/`, deploy to your own account and exercise
 the affected use case example end to end — several RCS constraints (carousel card

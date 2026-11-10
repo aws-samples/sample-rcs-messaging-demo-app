@@ -58,13 +58,13 @@ class ApiError(Exception):
 # so the dashboard can render a tooltip per feature. Add a key here and the
 # dashboard teaches it; there is no second list to keep in step.
 VIGNETTES = [
-    # Customer/member-facing vignettes.
-    {"id": "welcome", "name": "Welcome & RCS Intro", "category": "deterministic", "audience": "customer",
+    # Customer/member-facing vignettes — AnyHealth healthcare line of business.
+    {"id": "welcome", "brand": "anyhealth", "name": "Welcome & RCS Intro", "category": "deterministic", "audience": "customer",
      "trigger": "Start: Welcome",
      "description": "Educational front door — what RCS is, verified brand identity, opt-in/out, SMS fallback",
      "features": ["rich_card", "verified_identity", "per_message_fallback",
                   "suggested_replies", "postback_navigation"]},
-    {"id": "rx_refill", "name": "Pharmacy Rx Refill", "category": "deterministic", "audience": "customer",
+    {"id": "rx_refill", "brand": "anyhealth", "name": "Pharmacy Rx Refill", "category": "deterministic", "audience": "customer",
      "trigger": "Start: Rx_Refill",
      "description": "Refill flow; sends one PDF over RCS and one through a secure webview",
      # Both caveats, deliberately: "Rx Documents" sends the generic fact sheet as
@@ -74,39 +74,39 @@ VIGNETTES = [
      "features": ["rich_card", "suggested_actions", "dial_phone", "show_location",
                   "file_message", "event_driven_send", "webview",
                   "not_for_phi", "compliance_forward"]},
-    {"id": "appt_reminder", "name": "Appointment Reminder", "category": "deterministic", "audience": "customer",
+    {"id": "appt_reminder", "brand": "anyhealth", "name": "Appointment Reminder", "category": "deterministic", "audience": "customer",
      "trigger": "Start: Appt_Reminder", "description": "Appointment with confirm/reschedule",
      "features": ["rich_card", "two_way", "calendar_event", "show_location", "webview"]},
-    {"id": "appt_reschedule", "name": "Clinic-Initiated Reschedule", "category": "deterministic", "audience": "customer",
+    {"id": "appt_reschedule", "brand": "anyhealth", "name": "Clinic-Initiated Reschedule", "category": "deterministic", "audience": "customer",
      "trigger": "Start: Appt_Reschedule", "description": "The clinic moves a visit; member picks a new slot",
      "features": ["event_driven_send", "suggested_replies", "conversational_flow"]},
-    {"id": "verification", "name": "Verification Code", "category": "deterministic", "audience": "customer",
+    {"id": "verification", "brand": "anyhealth", "name": "Verification Code", "category": "deterministic", "audience": "customer",
      "trigger": "Start: Verification", "description": "One-time code with expiration (TimeToLive)",
      "features": ["time_to_live", "per_message_fallback", "otp", "suggested_replies"]},
-    {"id": "store", "name": "Wellness Store", "category": "deterministic", "audience": "customer",
+    {"id": "store", "brand": "anyhealth", "name": "Wellness Store", "category": "deterministic", "audience": "customer",
      "trigger": "Start: Store", "description": "Conversational cart & catalog",
      "features": ["carousel", "persistent_cart", "checkout"]},
-    {"id": "benefits_qa", "name": "Benefits & Coverage Q&A", "category": "ai-driven", "audience": "customer",
+    {"id": "benefits_qa", "brand": "anyhealth", "name": "Benefits & Coverage Q&A", "category": "ai-driven", "audience": "customer",
      "trigger": "Start: Benefits_QA", "description": "AI conversation about plan details",
      "features": ["ai_agent", "natural_language", "suggested_actions"]},
-    {"id": "find_care", "name": "Find a Provider", "category": "ai-driven", "audience": "customer",
+    {"id": "find_care", "brand": "anyhealth", "name": "Find a Provider", "category": "ai-driven", "audience": "customer",
      "trigger": "Start: Find_Care", "description": "AI-assisted in-network provider search",
      "features": ["ai_agent", "request_location", "provider_directory"]},
-    {"id": "handover", "name": "Live-Agent Handover", "category": "deterministic", "audience": "customer",
+    {"id": "handover", "brand": "anyhealth", "name": "Live-Agent Handover", "category": "deterministic", "audience": "customer",
      "trigger": "Start: Handover", "description": "Escalate from AI to a human agent",
      "features": ["human_handover", "agent_console"]},
     # Internal staff/employee-facing vignettes — same RCS channel, showing
     # workforce self-service use cases alongside the member-facing ones above.
-    {"id": "clock_in_out", "name": "Clock In / Out", "category": "deterministic", "audience": "internal",
+    {"id": "clock_in_out", "brand": "anyhr", "name": "Clock In / Out", "category": "deterministic", "audience": "internal",
      "trigger": "Start: Clock_In_Out", "description": "Employee attendance — start or end a shift",
      "features": ["rich_card", "two_way", "webview"]},
-    {"id": "my_schedule", "name": "My Schedule", "category": "deterministic", "audience": "internal",
+    {"id": "my_schedule", "brand": "anyhr", "name": "My Schedule", "category": "deterministic", "audience": "internal",
      "trigger": "Start: My_Schedule", "description": "Employee shift schedule, with PTO & swap shortcuts",
      "features": ["rich_card", "webview", "cross_flow_navigation"]},
-    {"id": "pto_request", "name": "PTO Request", "category": "deterministic", "audience": "internal",
+    {"id": "pto_request", "brand": "anyhr", "name": "PTO Request", "category": "deterministic", "audience": "internal",
      "trigger": "Start: PTO_Request", "description": "Request time off and track manager approval",
      "features": ["rich_card", "two_way", "approval_flow", "calendar_event"]},
-    {"id": "shift_swap", "name": "Shift Swap", "category": "deterministic", "audience": "internal",
+    {"id": "shift_swap", "brand": "anyhr", "name": "Shift Swap", "category": "deterministic", "audience": "internal",
      "trigger": "Start: Shift_Swap", "description": "Offer a shift to a coworker and track acceptance",
      "features": ["rich_card", "two_way", "approval_flow", "webview"]},
     # Rich-media demos — native RCS inbound media vs. compliance-forward
@@ -114,16 +114,16 @@ VIGNETTES = [
     # each flow module's docstring for the PII/PHI trade-off, and the
     # dashboard's PII guidance tooltip (rendered client-side) for the
     # member-facing explanation.
-    {"id": "photo_submission", "name": "Classify a Photo", "category": "deterministic", "audience": "customer",
+    {"id": "photo_submission", "brand": "anyhealth", "name": "Classify a Photo", "category": "deterministic", "audience": "customer",
      "trigger": "Start: Photo_Submission", "description": "Native RCS inbound photo — not for PII/PHI",
      "features": ["inbound_media", "genai_classification", "not_for_phi"]},
-    {"id": "insurance_upload", "name": "Secure Document Upload", "category": "deterministic", "audience": "customer",
+    {"id": "insurance_upload", "brand": "anyhealth", "name": "Secure Document Upload", "category": "deterministic", "audience": "customer",
      "trigger": "Start: Insurance_Upload", "description": "Webview upload with HEIC conversion — keeps the file off the carrier path; the demo page itself is unauthenticated",
      "features": ["webview", "heic_conversion", "genai_classification", "compliance_forward"]},
     # Signable document sent OUT to be read and signed in a webview — the
     # counterpart to Secure Document Upload's inbound direction. The agreement
     # and signature stay in the webview, never crossing the RCS/carrier network.
-    {"id": "loan_agreement", "name": "Loan Agreement (e-sign)", "category": "deterministic", "audience": "customer",
+    {"id": "loan_agreement", "brand": "anywealth", "name": "Loan Agreement (e-sign)", "category": "deterministic", "audience": "customer",
      "trigger": "Start: Loan_Agreement", "description": "Read-and-sign document in a webview — initials, signature, audit receipt",
      "features": ["rich_card", "webview", "compliance_forward"]},
     # Diagnostic, not a demo of anything a member would see: opens one page three
@@ -136,23 +136,114 @@ VIGNETTES = [
     # quietly falls back to the welcome carousel, so the wrong vignette arrives
     # on the handset with nothing logged as an error. It must round-trip to a
     # FLOW_MAP key.
-    {"id": "media_probe", "name": "Camera & Mic Probe", "category": "deterministic", "audience": "internal",
+    {"id": "media_probe", "brand": "anyhealth", "name": "Camera & Mic Probe", "category": "deterministic", "audience": "internal",
      "trigger": "Start: Media_Probe", "description": "Diagnostic: reports whether an RCS webview exposes the camera and mic on this handset",
      "features": ["text_message", "webview", "suggested_actions"]},
     # Experimental: a WebRTC video call (Amazon Chime SDK JS) running inside the
     # in-conversation webview. See lambda/flows/video_visit.py.
-    {"id": "video_visit", "name": "Video Visit (WebRTC)", "category": "deterministic", "audience": "customer",
+    {"id": "video_visit", "brand": "anyhealth", "name": "Video Visit (WebRTC)", "category": "deterministic", "audience": "customer",
      "trigger": "Start: Video_Visit", "description": "Experimental: Chime SDK video call inside the RCS webview",
      "features": ["rich_card", "webview", "suggested_actions"]},
     # Experiment, surfaced in the Settings tab (like Camera & Mic Probe), not the
     # member-facing list: opens the external Amazon IVS iCasino live-video demo
     # as a top-level RCS webview, to try IVS low-latency video there.
-    {"id": "ivs_experiment", "name": "IVS iCasino Webview (experiment)", "category": "deterministic", "audience": "internal",
+    {"id": "ivs_experiment", "brand": "anyhealth", "name": "IVS iCasino Webview (experiment)", "category": "deterministic", "audience": "internal",
      "trigger": "Start: IVS_Experiment", "description": "Experiment: opens a live Amazon IVS video stream in an RCS webview",
      "features": ["text_message", "webview", "suggested_actions"]},
-    {"id": "ivs_fitness", "name": "IVS Interactive Fitness Webview (experiment)", "category": "deterministic", "audience": "internal",
+    {"id": "ivs_fitness", "brand": "anyhealth", "name": "IVS Interactive Fitness Webview (experiment)", "category": "deterministic", "audience": "internal",
      "trigger": "Start: IVS_Fitness", "description": "Experiment: opens a live Amazon IVS interactive fitness stream in an RCS webview",
      "features": ["text_message", "webview", "suggested_actions"]},
+    # New-brand representative vignettes, per design section 6.
+    # AnyTravel hotels: AI-driven Room Booking + deterministic Express Check-In +
+    # deterministic Travel Offers carousel (replaces the old Mobile Check-in).
+    {"id": "room_booking", "brand": "anytravel", "name": "Room Booking",
+     "category": "ai-driven", "audience": "customer", "trigger": "Start: Room_Booking",
+     "description": "AI assistant books a stay in natural language, grounded on the hotel portfolio",
+     "features": ["ai_agent", "natural_language", "rich_card", "suggested_actions", "conversational_flow"]},
+    {"id": "express_checkin", "brand": "anytravel", "name": "Express Check-In",
+     "category": "deterministic", "audience": "customer", "trigger": "Start: Express_Checkin",
+     "description": "Event-driven check-in reminder → optional upgrade → digital room key in a webview",
+     "features": ["rich_card", "event_driven_send", "two_way", "show_location", "webview",
+                  "suggested_replies", "per_message_fallback"]},
+    {"id": "travel_offers", "brand": "anytravel", "name": "Travel Offers",
+     "category": "deterministic", "audience": "customer", "trigger": "Start: Travel_Offers",
+     "description": "Event-tied promotional carousel; Book This Stay hands off to Room Booking",
+     "features": ["carousel", "rich_card", "event_driven_send", "suggested_replies", "per_message_fallback"]},
+    # Brand assistants (AI): each brand's catch-all for typed text, grounded on
+    # its content files and their frontmatter facts (channel_adapter._ASSISTANTS).
+    {"id": "trip_assistant", "brand": "anytravel", "name": "Trip Assistant",
+     "category": "ai-driven", "audience": "customer", "trigger": "Start: Trip_Assistant",
+     "description": "AI assistant for flight, bag and hotel questions, grounded on the trip's facts; hands off to the flight and hotel examples",
+     "features": ["ai_agent", "natural_language", "suggested_replies", "cross_flow_navigation", "human_handover"]},
+    {"id": "account_assistant", "brand": "anywealth", "name": "Account Assistant",
+     "category": "ai-driven", "audience": "customer", "trigger": "Start: Account_Assistant",
+     "description": "AI assistant that explains the account, recent charges and the flagged transaction; it takes no account action",
+     "features": ["ai_agent", "natural_language", "suggested_replies", "cross_flow_navigation", "human_handover"]},
+    {"id": "hr_assistant", "brand": "anyhr", "name": "HR Assistant",
+     "category": "ai-driven", "audience": "internal", "trigger": "Start: Hr_Assistant",
+     "description": "AI assistant for shift, PTO and swap questions from the employee's own schedule; hands off to the staff examples",
+     "features": ["ai_agent", "natural_language", "suggested_replies", "cross_flow_navigation", "human_handover"]},
+    {"id": "jobsite_assistant", "brand": "anybuild", "name": "Jobsite Assistant",
+     "category": "ai-driven", "audience": "internal", "trigger": "Start: Jobsite_Assistant",
+     "description": "AI assistant for crew plan, delivery and readiness questions about the lot; hands off to the field examples",
+     "features": ["ai_agent", "natural_language", "suggested_replies", "cross_flow_navigation", "human_handover"]},
+    # AnyTravel airline: the same brand flies, so the trip is one thread end to end.
+    {"id": "flight_checkin", "brand": "anytravel", "name": "Flight Check-In",
+     "category": "deterministic", "audience": "customer", "trigger": "Start: Flight_Checkin",
+     "description": "Check-in reminder → seat choice → boarding pass in a webview, with Add to Calendar",
+     "features": ["rich_card", "event_driven_send", "suggested_replies", "webview", "calendar_event",
+                  "per_message_fallback"]},
+    {"id": "flight_status", "brand": "anytravel", "name": "Flight Status Alert",
+     "category": "deterministic", "audience": "customer", "trigger": "Start: Flight_Status",
+     "description": "Gate change and delay alert with a short TimeToLive, an airport map and a call chip",
+     "features": ["rich_card", "event_driven_send", "time_to_live", "show_location", "dial_phone",
+                  "per_message_fallback"]},
+    {"id": "flight_rebooking", "brand": "anytravel", "name": "Disruption Rebooking",
+     "category": "deterministic", "audience": "customer", "trigger": "Start: Flight_Rebooking",
+     "description": "Cancelled flight → carousel of next flights → one-tap rebook; an overnight option hands off to Room Booking",
+     "features": ["carousel", "rich_card", "event_driven_send", "suggested_replies", "calendar_event",
+                  "cross_flow_navigation", "per_message_fallback"]},
+    {"id": "bag_tracking", "brand": "anytravel", "name": "Bag Tracking",
+     "category": "deterministic", "audience": "customer", "trigger": "Start: Bag_Tracking",
+     "description": "Delayed bag status → deliver to the hotel or to a location the traveler shares",
+     "features": ["rich_card", "event_driven_send", "request_location", "dial_phone", "two_way",
+                  "suggested_replies", "per_message_fallback"]},
+    # AnyWealth: verified-sender fraud alert, "Yes/No it was me" replies, expiring code.
+    {"id": "wealth_fraud_alert", "brand": "anywealth", "name": "Fraud Alert", "category": "deterministic", "audience": "customer",
+     "trigger": "Start: Wealth_Fraud_Alert", "description": "Verified-sender fraud alert with reply chips and an expiring step-up code",
+     "features": ["rich_card", "otp", "suggested_replies", "per_message_fallback", "time_to_live"]},
+    # AnyBuild: field messaging between builders, suppliers and trades. Every
+    # example is transactional (an event or a reply, no offer), listed
+    # transactional-first. The two welcomes come first, one per app side.
+    {"id": "hello_builder", "brand": "anybuild", "name": "Hello: Builder App", "category": "deterministic", "audience": "customer",
+     "trigger": "Start: Hello_Builder", "description": "Transactional welcome for the builder side: who is writing, what to expect, how to opt out",
+     "features": ["rich_card", "verified_identity", "suggested_replies", "postback_navigation", "per_message_fallback"]},
+    {"id": "hello_supplier", "brand": "anybuild", "name": "Hello: Supplier App", "category": "deterministic", "audience": "customer",
+     "trigger": "Start: Hello_Supplier", "description": "Transactional welcome for the supplier side: who is writing, what to expect, how to opt out",
+     "features": ["rich_card", "verified_identity", "suggested_replies", "postback_navigation", "per_message_fallback"]},
+    {"id": "site_evidence", "brand": "anybuild", "name": "Site Evidence (Photo / Video)", "category": "deterministic", "audience": "customer",
+     "trigger": "Start: Site_Evidence", "description": "Inspection, work-ready and damaged-delivery proof sent as a photo or video; photos are described by GenAI, damage is routed to the supplier",
+     "features": ["inbound_media", "genai_classification", "suggested_replies", "not_for_phi"]},
+    {"id": "identity_capture", "brand": "anybuild", "name": "Identity Capture (ID)", "category": "deterministic", "audience": "customer",
+     "trigger": "Start: Identity_Capture", "description": "Driver's license or passport photographed on a secure webview page, so the image never crosses the carrier network",
+     "features": ["rich_card", "webview", "heic_conversion", "genai_classification", "compliance_forward"]},
+    {"id": "arrival_alert", "brand": "anybuild", "name": "Arrival Alert (Geofence)", "category": "deterministic", "audience": "customer",
+     "trigger": "Start: Arrival_Alert", "description": "A truck crosses a geofence and the site is told, with one-tap Gate Open or Hold; your system detects the fence, RCS carries the message",
+     "features": ["rich_card", "event_driven_send", "geofence_trigger", "suggested_replies", "show_location", "per_message_fallback"]},
+    {"id": "delivery_location", "brand": "anybuild", "name": "Delivery Location", "category": "deterministic", "audience": "customer",
+     "trigger": "Start: Delivery_Location", "description": "Where was the load left? A map pin and drop photo; either side corrects it by sharing a location",
+     "features": ["rich_card", "show_location", "request_location", "suggested_replies", "two_way", "per_message_fallback"]},
+    {"id": "field_schedule", "brand": "anybuild", "name": "Field Schedule", "category": "deterministic", "audience": "internal",
+     "trigger": "Start: Field_Schedule", "description": "Tomorrow's crew plan for the trailer: confirm or can't-make-it with a reason, and a roll call",
+     "features": ["rich_card", "two_way", "approval_flow", "calendar_event", "suggested_replies", "per_message_fallback"]},
+    {"id": "job_readiness", "brand": "anybuild", "name": "Job Readiness (Hand-offs)", "category": "deterministic", "audience": "internal",
+     "trigger": "Start: Job_Readiness", "description": "Dependencies between trades: marking cabinets done clears the countertop crew, who accept, propose a date or push back",
+     "features": ["rich_card", "two_way", "approval_flow", "calendar_event", "show_location", "suggested_replies", "per_message_fallback"]},
+    # The read-and-sign webview pattern of loan_agreement, with a generic
+    # agreement and waiver document (flows/agreement_waiver.py).
+    {"id": "agreement_waiver", "brand": "anybuild", "name": "Agreement/Waiver", "category": "deterministic", "audience": "customer",
+     "trigger": "Start: Agreement_Waiver", "description": "Read-and-sign document in a webview — initials, signature, audit receipt",
+     "features": ["rich_card", "webview", "compliance_forward"]},
 ]
 
 
@@ -234,6 +325,31 @@ _PREVIEWABLE = {
     "video_visit": lambda: get_flow("video_visit").preview_message(),
     "ivs_experiment": lambda: get_flow("ivs_experiment").preview_message(),
     "ivs_fitness": lambda: get_flow("ivs_fitness").preview_message(),
+    # New-brand representative vignettes. express_checkin / travel_offers
+    # on_start("", "") are side-effect free (read content + resolve_media, no
+    # DynamoDB write, no send); Room Booking is AI-driven with no fixed content,
+    # so it is excluded from preview (R11.4, like benefits_qa / find_care).
+    # wealth_fraud_alert has a preview_message() so the step-up code is a fixed
+    # placeholder rather than a fresh random value on every card open.
+    "express_checkin": lambda: get_flow("express_checkin").on_start("", ""),
+    "travel_offers": lambda: get_flow("travel_offers").on_start("", ""),
+    # AnyTravel airline: each preview_message() reads content only.
+    "flight_checkin": lambda: get_flow("flight_checkin").preview_message(),
+    "flight_status": lambda: get_flow("flight_status").preview_message(),
+    "flight_rebooking": lambda: get_flow("flight_rebooking").preview_message(),
+    "bag_tracking": lambda: get_flow("bag_tracking").preview_message(),
+    "wealth_fraud_alert": lambda: get_flow("wealth_fraud_alert").preview_message(),
+    # AnyBuild: each has a preview_message() that reads content only (no
+    # DynamoDB read or write keyed to a real recipient, no send).
+    "hello_builder": lambda: get_flow("hello_builder").preview_message(),
+    "hello_supplier": lambda: get_flow("hello_supplier").preview_message(),
+    "site_evidence": lambda: get_flow("site_evidence").preview_message(),
+    "identity_capture": lambda: get_flow("identity_capture").preview_message(),
+    "arrival_alert": lambda: get_flow("arrival_alert").preview_message(),
+    "delivery_location": lambda: get_flow("delivery_location").preview_message(),
+    "field_schedule": lambda: get_flow("field_schedule").preview_message(),
+    "job_readiness": lambda: get_flow("job_readiness").preview_message(),
+    "agreement_waiver": lambda: get_flow("agreement_waiver").preview_message(),
 }
 
 
@@ -372,6 +488,43 @@ def _chime_sdk_src():
     return _chime_sdk_src_cache
 
 
+# The media-probe page's report fields (lambda/webviews/media-probe.html). Only
+# these reach the log: capability flags, short status strings, and lists of
+# track and device kinds. Anything else a caller puts in the string is dropped.
+_PROBE_FLAGS = ("secureContext", "hasMediaDevices", "hasGetUserMedia", "hasRTCPeerConnection",
+                "hasEnumerateDevices", "androidWebViewToken", "hasInsertableStreams", "hasAudioContext")
+_PROBE_RESULTS = ("OK", "AUDIO_ONLY", "DENIED", "NO_API")
+_PROBE_TEXT = {"probe": 40, "t": 40, "ua": 300, "videoAudio": 80, "audioOnly": 80}
+_PROBE_KINDS = ("audio", "video", "audioinput", "audiooutput", "videoinput")
+
+
+def _probe_report_fields(report):
+    """The allow-listed, size-bounded fields of a probe report, as JSON text."""
+    try:
+        data = json.loads(str(report)[:4000])
+    except (ValueError, TypeError):
+        return json.dumps({"unparseable": True, "chars": len(str(report))})
+    if not isinstance(data, dict):
+        return json.dumps({"unparseable": True})
+    out = {k: data[k] for k in _PROBE_FLAGS if isinstance(data.get(k), bool)}
+    for k, limit in _PROBE_TEXT.items():
+        if isinstance(data.get(k), str):
+            out[k] = data[k][:limit]
+    if data.get("result") in _PROBE_RESULTS:
+        out["result"] = data["result"]
+    if isinstance(data.get("tracks"), list):
+        out["tracks"] = [
+            {"kind": t["kind"], "state": str(t.get("state", ""))[:10], "muted": t.get("muted") is True}
+            for t in data["tracks"][:4] if isinstance(t, dict) and t.get("kind") in _PROBE_KINDS
+        ]
+    if isinstance(data.get("devices"), list):
+        out["devices"] = [
+            {"kind": d["kind"], "labelled": d.get("labelled") is True}
+            for d in data["devices"][:10] if isinstance(d, dict) and d.get("kind") in _PROBE_KINDS
+        ]
+    return json.dumps(out)
+
+
 def serve_webview(path, params=None):
     page = path.replace("/webview/", "").rstrip("/")
     # media-probe.html reports its findings by re-fetching its own URL with a
@@ -379,11 +532,13 @@ def serve_webview(path, params=None):
     # diagnostic adds no writable surface and no route: this only logs. A
     # HALF-mode webview can be too small to read and the messaging app may close
     # it before the tester has finished looking, so CloudWatch is the durable
-    # copy. Truncated because a query string is unbounded input; the report
-    # carries capability flags and a user agent, no phone number and no media.
+    # copy. The route is open to anyone, so the report is not logged as sent:
+    # _probe_report_fields keeps only the probe's known fields, each bounded.
     report = (params or {}).get("report")
     if report:
-        print(f"WEBVIEW_PROBE_REPORT page={page} {report[:4000]}")
+        # The page name comes from the request path, so only a known page is named.
+        known = page if page in WEBVIEWS else "other"
+        print(f"WEBVIEW_PROBE_REPORT page={known} {_probe_report_fields(report)}")
         # Answer the report itself rather than re-serving the page: the caller is
         # an Image() GET that wants nothing back.
         return {"statusCode": 204, "headers": {"Access-Control-Allow-Origin": "*"}, "body": ""}
@@ -398,7 +553,10 @@ def serve_webview(path, params=None):
         # not safe inside a <script>, where entities are not decoded and a quote
         # ends the string literal — templates must keep the token out of scripts
         # and read the rendered text from the DOM instead (see video-visit.html).
+        # {{WORK_LOCATION}} (the selected brand's sample workplace, from content)
+        # follows the same rule: escaped for HTML, and kept out of scripts.
         html = (html.replace("{{BRAND_NAME}}", html_escape(str(c.brand_name()), quote=True))
+                    .replace("{{WORK_LOCATION}}", html_escape(str(c.work_location()), quote=True))
                     .replace("{{ACCENT}}", c.accent_color())
                     .replace("{{CHIME_SDK_SRC}}", _chime_sdk_src()))
         return {"statusCode": 200, "headers": {"Content-Type": "text/html", "Access-Control-Allow-Origin": "*"}, "body": html}
@@ -447,7 +605,15 @@ def handler(event, context):
         elif path == "/api/brand":
             body = get_brand()
         elif path == "/api/vignettes":
-            body = _resolve_features(VIGNETTES)
+            # One brand is deployed at a time, so the catalog the dashboard
+            # lists is just that brand's vignettes. The `brand` key on each
+            # entry is matched against the selected brand id, resolved exactly
+            # as /api/brand resolves it (_selected_brand_id). Feature-key
+            # resolution is unchanged — filter first, then expand.
+            selected = _selected_brand_id()
+            body = _resolve_features(
+                [v for v in VIGNETTES if v.get("brand") == selected]
+            )
         elif path == "/api/vignettes/features":
             # The whole RCS feature registry, including the features this demo
             # deliberately does not implement — the Guide tab's "Learn RCS"
@@ -586,7 +752,7 @@ def get_version():
     """The deployed backend's version string, shown in the dashboard status bar
     beside the frontend's own (which the browser already knows, having had it
     compiled in). Baked into the function's environment at synth time by
-    cdk/lib/anyhealth-stack.ts — there is nothing to compute at runtime, and a
+    cdk/lib/rcs-demo-stack.ts — there is nothing to compute at runtime, and a
     Lambda has no git tree to ask.
 
     'unknown' means the stack was synthesized somewhere the version script
@@ -783,18 +949,42 @@ def get_agent_identity():
 
 
 # ── Brand / theme ───────────────────────────────────────────────────────────
+def _selected_brand_id():
+    """The id of the single selected brand this deploy serves — the value the
+    dashboard themes and labels itself with. Mirrors common.brand()'s own
+    resolution so /api/brand reports the exact block the accessors return:
+    the injected BRAND env var, defaulting to the catalog's defaultBrand when
+    unset, and the legacy single-brand default when the catalog is absent."""
+    fm = c.content_frontmatter("brand.md")
+    brands = fm.get("brands")
+    if isinstance(brands, dict) and brands:
+        selected = c.SELECTED_BRAND or fm.get("defaultBrand", "")
+        return selected if selected in brands else (fm.get("defaultBrand", "") or "anyhealth")
+    return c.SELECTED_BRAND or fm.get("defaultBrand") or "anyhealth"
+
+
 def get_brand():
+    """The single selected brand this deploy serves — its identity/theme read
+    from the source of truth via common's selected-brand accessors (never a
+    hardcoded brand). The dashboard presents exactly this one brand; no other
+    brand's identity is included. The brand id is the injected BRAND env var."""
     b = c.brand()
     sm = c.store_meta()
     return {
-        "brandName": b.get("brandName", "AnyHealth"),
-        "accentColor": b.get("accentColor", "#0B6E6F"),
+        "brandId": _selected_brand_id(),
+        "brandName": c.brand_name(),
+        "displayName": c.brand_display_name(),
+        "lineOfBusiness": c.line_of_business(),
+        "accentColor": c.accent_color(),
         "tagline": b.get("tagline", ""),
         "memberServicesPhone": c.member_services_phone(),
         "storeName": sm.get("storeName", "Store"),
         # Lets the Recipients tab show the exact body to put in the agent's
         # inbound deep link, and warn if a pasted link disagrees with it.
         "deepLinkKeyword": c.deep_link_keyword(),
+        # What the human on the other end of a handover is called for this
+        # brand, so the dashboard's takeover/reply copy names the right role.
+        "liveAgentRole": c.live_agent_role(),
         # The RCS testing-registration fields, verbatim from brand.md
         # frontmatter. These are what a recipient's messaging app renders as
         # the agent's identity -- name, description, and the contact actions on
@@ -1149,6 +1339,23 @@ def get_testers_with_metrics():
     return [{**t, **_conversation_metrics(t["phone_hash"])} for t in testers]
 
 
+# Status event types counted on the Recipients tab. The TEXT_* and MEDIA_* ones
+# are the SMS or MMS a per-message fallback sends; the configuration set
+# subscribes RCS_ALL, TEXT_ALL and MEDIA_ALL (see rcs-demo-stack.ts).
+# RCS_TTL_EXPIRED means no delivery confirmation arrived in time, a failed RCS
+# delivery. See common._EVENT_EXPLANATIONS and the EventType enum.
+_DELIVERED_TYPES = ("RCS_DELIVERED", "TEXT_DELIVERED", "MEDIA_DELIVERED")
+_FAILED_TYPES = (
+    "RCS_FAILED", "RCS_TTL_EXPIRED", "RCS_PROTECT_BLOCKED",
+    "TEXT_INVALID", "TEXT_INVALID_MESSAGE", "TEXT_UNREACHABLE", "TEXT_CARRIER_UNREACHABLE",
+    "TEXT_BLOCKED", "TEXT_CARRIER_BLOCKED", "TEXT_SPAM", "TEXT_UNKNOWN", "TEXT_TTL_EXPIRED",
+    "TEXT_PROTECT_BLOCKED",
+    "MEDIA_INVALID", "MEDIA_INVALID_MESSAGE", "MEDIA_UNREACHABLE", "MEDIA_CARRIER_UNREACHABLE",
+    "MEDIA_BLOCKED", "MEDIA_CARRIER_BLOCKED", "MEDIA_SPAM", "MEDIA_UNKNOWN", "MEDIA_TTL_EXPIRED",
+    "MEDIA_FILE_INACCESSIBLE", "MEDIA_FILE_TYPE_UNSUPPORTED", "MEDIA_FILE_SIZE_EXCEEDED",
+)
+
+
 def _conversation_metrics(ph):
     """Aggregate per-recipient RCS activity from two distinct sources:
 
@@ -1156,13 +1363,13 @@ def _conversation_metrics(ph):
        logged by common.send_rcs on every call. These are always available
        and are what "Sent" reports on the Recipients tab.
     2. Async platform events (RCS_DELIVERED / RCS_READ / RCS_FAILED /
-       RCS_TTL_EXPIRED), logged
-       by common.log_event from the configuration set's SNS event destination.
-       On a testing agent, delivery events appear once the agent is launched in
-       a country; the RCSMessagesDelivered CloudWatch metric counts deliveries
-       in the meantime. That metric has no per-recipient dimension, so it
-       cannot back these columns. They are counted here so they populate on
-       their own after a country launch.
+       RCS_TTL_EXPIRED, and the TEXT_* / MEDIA_* events of a fallback SMS or
+       MMS), logged by common.log_event from the configuration set's SNS event
+       destination. They arrive on a testing agent as well, as long as the
+       topic's KMS key lets sms-voice.amazonaws.com publish (see the topic in
+       rcs-demo-stack.ts). The RCSMessagesDelivered CloudWatch metric is the
+       cross-check; it has no per-recipient dimension, so it cannot back these
+       columns itself.
 
     Delivered/read/failed are keyed on messageStatus, not on the event type:
     RCS_DELIVERED is the type for the whole delivery lifecycle and carries
@@ -1200,10 +1407,11 @@ def _conversation_metrics(ph):
                 failed += 1
             elif event_type == "RCS_READ" or status == "READ":
                 read += 1
-            elif status == "DELIVERED" or (event_type == "RCS_DELIVERED" and not status):
+            elif status == "DELIVERED" or (event_type in _DELIVERED_TYPES and not status):
                 # The "and not status" arm covers an event that arrives without
                 # messageStatus: the type alone still means the delivery
-                # lifecycle reached a terminal success.
+                # lifecycle reached a terminal success. TEXT_DELIVERED and
+                # MEDIA_DELIVERED are the SMS or MMS a fallback sent.
                 delivered += 1
             elif event_type == "RCS_FALLEN_BACK_TO_SMS":
                 # Previously matched no branch at all, so a fallback — the one
@@ -1214,12 +1422,7 @@ def _conversation_metrics(ph):
                 # it. The RCS_FAILED/RCS_TTL_EXPIRED sibling event still counts
                 # in failed; see the docstring on why that isn't deduplicated.
                 fell_back += 1
-            elif status in ("UNDELIVERABLE", "REJECTED") or event_type in (
-                # RCS_TTL_EXPIRED is the event for TTL expiry: no delivery
-                # confirmation arrived, which is a failed RCS delivery. See
-                # common._EVENT_EXPLANATIONS for the enum.
-                "RCS_FAILED", "RCS_TTL_EXPIRED", "RCS_PROTECT_BLOCKED"
-            ):
+            elif status in ("UNDELIVERABLE", "REJECTED") or event_type in _FAILED_TYPES:
                 failed += 1
         elif direction == "inbound":
             inbound += 1
@@ -1403,7 +1606,10 @@ def agent_reply(p):
     """Human agent reply from the dashboard console during live handover."""
     if not p.get("phone") or not p.get("message"):
         return {"error": "phone and message required"}
-    _invoke_adapter({"phone": p["phone"], "agent_message": p["message"], "agent": p.get("agent", "Care Advocate")})
+    # Pass the agent label through as-is (None when the console sends none); the
+    # adapter defaults it to the brand's own live-agent role, so no healthcare
+    # term is hardcoded here.
+    _invoke_adapter({"phone": p["phone"], "agent_message": p["message"], "agent": p.get("agent")})
     return {"status": "sent", "phone": p["phone"]}
 
 
@@ -1484,7 +1690,7 @@ def get_secure_doc(phone_hash, doc_id):
     the bytes travel from S3 to that browser over HTTPS. Nothing about the
     member enters the message stream, and neither the bucket policy for the EUM
     service principal nor the channel adapter's role in
-    cdk/lib/anyhealth-stack.ts grants read access to `secure-docs/`, and a file
+    cdk/lib/rcs-demo-stack.ts grants read access to `secure-docs/`, and a file
     message naming this document was refused with RESOURCE_NOT_ACCESSIBLE on a
     test deployment. The dashboard's own role does hold that read, to presign it
     here, and shares the adapter's sms-voice:SendRcsMessage grant; nothing in
@@ -1529,14 +1735,17 @@ def get_secure_doc(phone_hash, doc_id):
 
 
 def get_latest_media_for_demo(phone):
-    """Backs the Demo tab's "latest photo received" preview on the two
+    """Backs the Demo tab's "latest photo received" preview on the
     rich-media vignette cards (photo_submission = native RCS inbound,
-    insurance_upload = webview upload). The two paths store their state
-    completely differently — native media lives in the conversation log
-    (common.set/get_latest_media), webview uploads live in their own
-    UPLOAD# records (common.get_latest_upload) — so this reads both and
-    returns a preview_url + one-sentence classification for whichever
-    exist, letting the frontend render each vignette card independently."""
+    insurance_upload and identity_capture = webview upload). The two paths
+    store their state completely differently — native media lives in the
+    conversation log (common.set/get_latest_media), webview uploads live in
+    their own UPLOAD# records (common.get_latest_upload and
+    get_latest_id_capture) — so this reads both and returns a preview_url +
+    one-sentence classification for whichever exist (a list of one or two
+    sides for identity_capture, and the latest ticket's items for
+    site_evidence, from its BUILD# evidence_log state), letting the frontend
+    render each vignette card independently."""
     if not phone:
         return {"error": "phone required"}
     ph = c.hash_phone(phone)
@@ -1579,7 +1788,71 @@ def get_latest_media_for_demo(phone):
             "updated": upload.get("created_at", ""),
         }
 
+    id_capture = _id_capture_for_demo(ph, s3)
+    if id_capture:
+        result["identity_capture"] = id_capture
+
+    evidence = _site_evidence_for_demo(ph, s3)
+    if evidence:
+        result["site_evidence"] = evidence
+
     return result
+
+
+def _site_evidence_for_demo(ph, s3):
+    """The Site Evidence card's preview: the latest ticket, its evidence type
+    and every item logged on it, in order (flows/site_evidence._log_item). An
+    image the browser can show gets a preview_url; a video or other file is
+    listed without one. Kept after the sender taps Done; cleared by Reset."""
+    log = c.get_build_state(ph, "evidence_log")
+    kind = c.evidence_kind_by_id(log.get("kind")) if log else None
+    items = log.get("items") if log else None
+    if not kind or not isinstance(items, list) or not items:
+        return None
+    return {
+        "ticket": str(log.get("ticket", "")),
+        "kind_label": str(kind.get("name", "")),
+        "items": [{
+            "n": str(i.get("n", "")),
+            "type": i.get("type") if i.get("type") in ("image", "video", "file") else "file",
+            "preview_url": s3.generate_presigned_url(
+                "get_object", Params={"Bucket": c.S3_BUCKET, "Key": i["key"]}, ExpiresIn=3600,
+            ) if i.get("key") else None,
+            "classification": str(i.get("classification", "")),
+            "file_name": str(i.get("file_name", "")),
+            "updated": str(i.get("at", "")),
+        } for i in items if isinstance(i, dict)],
+    }
+
+
+def _id_capture_for_demo(ph, s3):
+    """The Identity Capture card's preview: the latest visit's ID type and one
+    entry per side that type needs (one for a passport, front and back for a
+    license), in order. A side not uploaded yet is listed with status MISSING,
+    so the card can show an empty slot for it. preview_url is set only once
+    media_convert has produced the JPEG."""
+    visit = c.get_latest_id_capture(ph)
+    doc = c.id_document_by_id(visit.get("id_type")) if visit else None
+    if not doc:
+        return None
+    images = []
+    for step in doc["steps"]:
+        item = visit["uploads"].get(step["side"]) or {}
+        status = item.get("status", "MISSING")
+        images.append({
+            "side": step["side"],
+            "label": step["label"],
+            "status": status,
+            "preview_url": s3.generate_presigned_url(
+                "get_object", Params={"Bucket": c.S3_BUCKET, "Key": item["converted_key"]}, ExpiresIn=3600,
+            ) if item.get("converted_key") else None,
+            # PENDING is a link handed out for a file that may never arrive;
+            # only PROCESSING means media_convert is working on one.
+            "converting": status == "PROCESSING",
+            "classification": item.get("classification", ""),
+            "updated": item.get("created_at", ""),
+        })
+    return {"id_type": doc["id"], "id_label": doc.get("name", doc["id"]), "images": images}
 
 
 # ── Webview uploads (secure document upload) ─────────────────────────────────
@@ -1592,10 +1865,32 @@ _UPLOAD_ACCEPTED_CONTENT_TYPES = {
 # Matched with fullmatch, never `$`, which also accepts a trailing newline.
 _PHONE_HASH_RE = re.compile(r"anon-[0-9a-f]{24}")
 
+# One opening of the Identity Capture page (id-capture.html makes it up).
+_CAPTURE_ID_RE = re.compile(r"[0-9a-f]{16}")
+
+
+def _id_capture_fields(p):
+    """The Identity Capture fields of an upload request, validated, or None for
+    Secure Document Upload (a request that names no use case). The page is
+    unauthenticated, so nothing here is trusted: the ID type and side must be
+    ones content/construction.md lists for the deployed brand (a brand without
+    `idDocuments` accepts none), and the capture id must match its shape."""
+    vignette = p.get("vignette")
+    if vignette in (None, "", c.UPLOAD_DEFAULT_VIGNETTE):
+        return None
+    doc = c.id_document_by_id(p.get("id_type")) if vignette == "identity_capture" else None
+    side = p.get("side")
+    capture_id = p.get("capture_id")
+    if (not doc or side not in [s["side"] for s in doc["steps"]]
+            or not isinstance(capture_id, str) or not _CAPTURE_ID_RE.fullmatch(capture_id)):
+        raise ApiError(400, "INVALID_UPLOAD_REQUEST",
+                       "This upload link is not valid. Reopen it from your message thread.")
+    return {"vignette": vignette, "id_type": doc["id"], "side": side, "capture_id": capture_id}
+
 
 def create_upload_url(p):
-    """Called from lambda/webviews/upload-insurance-card.html. Returns a
-    presigned S3 PUT URL scoped to a fresh object key under
+    """Called from lambda/webviews/upload-insurance-card.html and
+    id-capture.html. Returns a presigned S3 PUT URL scoped to a fresh object key under
     common.UPLOAD_RAW_PREFIX/{phone_hash}/ — the browser PUTs the file bytes
     directly to S3 with this URL; they never pass through this Lambda or any
     other AWS API surface, matching the compliance-forward design described
@@ -1620,12 +1915,13 @@ def create_upload_url(p):
             or content_type not in _UPLOAD_ACCEPTED_CONTENT_TYPES):
         raise ApiError(400, "INVALID_UPLOAD_REQUEST",
                        "A valid upload link and a supported image type are required.")
+    capture = _id_capture_fields(p)
     if not c.conversation_history(phone_hash, limit=1):
         # No conversation under this hash, so no link this demo sent produced it.
         print(f"create_upload_url: no conversation for {phone_hash[:12]!r}")
         raise ApiError(404, "UPLOAD_LINK_INVALID",
                        "This upload link is not valid. Reopen it from your message thread.")
-    upload = c.new_upload(phone_hash, content_type)
+    upload = c.new_upload(phone_hash, content_type, capture)
     s3 = boto3.client("s3", region_name=c.REGION)
     put_url = s3.generate_presigned_url(
         "put_object",

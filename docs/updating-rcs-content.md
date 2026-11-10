@@ -6,9 +6,8 @@ This page is that procedure — short, human-paced, and not an automated job.
 
 ## The durable principle
 
-Every documented RCS limit and every AWS doc link lives in
-`content/rcs-features.json` and nowhere else. Everything that needs one reads it
-from there:
+Every RCS limit and AWS doc link that the code or the dashboard uses lives in
+`content/rcs-features.json`. Everything that needs one reads it from there:
 
 - `lambda/common.py` exposes it through `rcs_registry()` and `rcs_limit()`, so
   validation limits come from the registry.
@@ -20,8 +19,12 @@ from there:
 - `cdk/lib/config.ts` bundles the file into every Lambda at synth and hard-fails
   the build if it is missing.
 
-Nothing hardcodes a limit. `scripts/check-rcs-registry.py` fails the build if
-anything does.
+Read every limit with `rcs_limit()`. `scripts/check-rcs-registry.py` fails if a
+distinctive limit value (1,000 or more, other than 2,000) appears as a literal in
+`lambda/`. Small limits such as 4, 10, 11 or 25 are too common to scan for, so for
+those the rule is a convention. The narrative docs (`docs/tutorial.md`,
+`docs/architecture.md`) repeat some numbers and links in prose, so check them by
+hand during the same read.
 
 ## The one check that runs
 
@@ -33,16 +36,29 @@ python3 scripts/check-rcs-registry.py
 ```
 
 It verifies that every use case example's feature key exists, every `limitRefs` names a
-real limit, every entry carries its required fields, nothing hardcodes a
-documented limit in `lambda/`, and no `surfaces` claim has gone stale. A run
-that would check nothing is treated as a failure.
+real limit, every entry carries its required fields, every vignette's `brand` is
+a brand defined in `content/brand.md`'s catalog, every brand has a usable
+`homeMenu` (one to ten tiles, labels within the chip limit, postbacks the
+channel adapter routes) and the adapter still handles the `reset_conversation`
+Start Over postback, nothing hardcodes a documented
+limit or a brand display-name literal in `lambda/`, and no `surfaces` claim has
+gone stale. It also keeps each brand to its own content: a brand's `vignettes`
+list equals the catalog entries tagged with that brand, every listed id is a
+flow or an AI assistant, `defaultVignette` is empty or an AI assistant the brand
+lists, the four member fields are set in the brand's own block and name no other
+brand, no grounding file names another brand, and every `homeMenu` tile opens a
+vignette the brand owns. It also checks the brands' registration fields and
+contact pairs, the fictional phone-number range, `accentColor` contrast, the
+room photo files, that every native-action chip is in `ACTION_ONLY_POSTBACKS`,
+and the reserved AI chip ids. A run that would check nothing is treated as a failure.
 
 Then the ordinary build verification:
 
 ```bash
 python3 -m py_compile lambda/*.py lambda/flows/*.py
-cd web && npx tsc --noEmit && cd ..
-cd cdk && npx cdk synth >/dev/null && cd ..
+(cd web && npm run typecheck)
+node --test 'scripts/test/*.test.mjs'
+(cd cdk && npx cdk synth --quiet -c brand=<id> -c rcsAgentId=rcs-00000000000000000000000000000000 -c region=us-east-1 -c skipAgentCheck=true)
 ```
 
 ## Keeping the facts current (a periodic human read)
@@ -92,6 +108,8 @@ without them:
 | You finished a read of the user guide | `content/rcs-features.json` → `reviewedOn` |
 | A feature explanation, caveat (the `gotcha` field) or doc link | `content/rcs-features.json` → `features` |
 | Which features a use case example claims | `lambda/dashboard_handler.py` → `VIGNETTES[*].features` (keys into the registry) |
+| Which brand a use case example belongs to | `lambda/dashboard_handler.py` → `VIGNETTES[*].brand` (a brand id defined in `content/brand.md`; the dashboard shows only the selected brand's vignettes), and the same id in `content/brand.md` → `brands.<id>.vignettes`, which decides what the phone opens; the check fails if the two differ |
+| A brand's home-menu tiles (the chips a Start Over lands on) | `content/brand.md` → `brands.<id>.homeMenu` |
 | Narrative explanation of *why* | `docs/tutorial.md`, `docs/architecture.md` |
 | Operator-facing dashboard copy | `web/src/views/Guide.tsx`, `web/src/components/FeatureTag.tsx`, `web/src/components/PiiGuidanceTooltip.tsx` |
 
@@ -149,8 +167,10 @@ screen.
 
 ## CI
 
-`.github/workflows/rcs-content-checks.yml` runs the offline registry check on
-every push and pull request. That is the only job: it needs no network access
-and no AWS credentials, so it never depends on a third-party site being up.
-Keeping the doc links and limit values current is the human read described
-above.
+`.github/workflows/rcs-content-checks.yml` runs on every push and pull request.
+The `registry` job runs the registry check, which needs no network access and no
+AWS credentials. The other jobs run the offline script tests, typecheck the CDK
+app and the dashboard, and run `cdk synth` for every catalog brand with a
+placeholder agent id and `-c skipAgentCheck=true`; those need the network for
+npm and pip, and none uses AWS credentials. No job checks the limit values or
+doc links against AWS: that is the human read described above.

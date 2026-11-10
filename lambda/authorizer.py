@@ -17,7 +17,7 @@ has to call it: the member-facing webview and upload routes, static demo
 metadata (/api/brand, /api/vignettes*), and GET /api/media, whose response is
 consumed as an <img src> and which is instead restricted server-side to an
 allow-list of key prefixes (see dashboard_handler._MEDIA_ALLOWED_PREFIXES).
-The authoritative route split is in cdk/lib/anyhealth-stack.ts, and SECURITY.md
+The authoritative route split is in cdk/lib/rcs-demo-stack.ts, and SECURITY.md
 lists both sets.
 
 This is a lightweight control appropriate for a demo, not a substitute for a
@@ -36,7 +36,7 @@ SECRET_ARN = os.environ.get("API_KEY_SECRET_ARN", "")
 # How long a warm container trusts the secret it last read. Once the cached copy
 # is older than this, the next request re-reads Secrets Manager, so a rotated
 # key's predecessor stops working here within this window. The HTTP API's own
-# result cache (resultsCacheTtl in cdk/lib/anyhealth-stack.ts) adds to the
+# result cache (resultsCacheTtl in cdk/lib/rcs-demo-stack.ts) adds to the
 # delay; SECURITY.md ("Rotating the API key") has the combined worst case.
 SECRET_CACHE_TTL_SECONDS = 60
 

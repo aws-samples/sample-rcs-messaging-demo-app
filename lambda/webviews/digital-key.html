@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{BRAND_NAME}} — Digital Key</title>
+<style>
+  :root { --accent: {{ACCENT}}; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1a1a1a; background: #f6f8f8; }
+  header { background: var(--accent); color: #fff; padding: 20px 18px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; font-size: 13px; }
+  main { padding: 18px; }
+  .card { background: #fff; border: 1px solid #e4e9e9; border-radius: 14px; padding: 24px 18px; text-align: center; }
+  .property { margin: 0; font-size: 15px; color: #4a5560; overflow-wrap: anywhere; }
+  .room { margin: 6px 0 0; font-size: 34px; font-weight: 700; line-height: 1.15; overflow-wrap: anywhere; }
+  .key { position: relative; width: 112px; height: 112px; margin: 26px auto 18px; }
+  .key .ring { position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--accent); opacity: 0; animation: pulse 2.4s ease-out infinite; }
+  .key .ring:nth-child(2) { animation-delay: 1.2s; }
+  .key .core { position: absolute; inset: 22px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 700; }
+  @keyframes pulse { 0% { transform: scale(.55); opacity: .7; } 100% { transform: scale(1.1); opacity: 0; } }
+  .status { display: inline-block; margin: 0; padding: 5px 12px; border-radius: 999px; background: #e6f4ea; color: #14532d; font-size: 14px; font-weight: 600; }
+  .hold { margin: 20px 0 0; font-size: 26px; font-weight: 700; }
+  .hint { margin: 6px 0 0; font-size: 14px; color: #4a5560; }
+  .note { color: #4a5560; font-size: 13px; margin-top: 14px; }
+  @media (prefers-reduced-motion: reduce) {
+    .key .ring { animation: none; opacity: .35; transform: scale(.9); }
+    .key .ring:nth-child(2) { display: none; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1 id="brand">{{BRAND_NAME}}</h1>
+    <p>Digital Key</p>
+  </header>
+  <main>
+    <div class="card">
+      <p class="property" id="property">Your hotel</p>
+      <p class="room" id="room">Your room</p>
+      <div class="key" aria-hidden="true">
+        <span class="ring"></span>
+        <span class="ring"></span>
+        <span class="core">&#x1F511;</span>
+      </div>
+      <p class="status" id="status" role="status" aria-live="polite">Key active</p>
+      <p class="hold">Hold near the door</p>
+      <p class="hint">Hold the top of your phone close to the lock until it opens.</p>
+    </div>
+    <p class="note">This is a demo key opened inside the RCS conversation. It does not open a real door.</p>
+  </main>
+<script>
+  (function () {
+    var MAX = 80;
+    var params = new URLSearchParams(location.search);
+    function clean(name) {
+      var v = (params.get(name) || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+      return v.length > MAX ? v.slice(0, MAX) : v;
+    }
+    var property = clean("property");
+    var room = clean("room");
+    var propertyEl = document.getElementById("property");
+    var roomEl = document.getElementById("room");
+    // Text only: query-string values are untrusted and must never become markup.
+    if (property) { propertyEl.textContent = property; }
+    roomEl.textContent = room ? "Room " + room : "Your room";
+  })();
+</script>
+</body>
+</html>

@@ -10,12 +10,23 @@ import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Box from '@cloudscape-design/components/box';
 import Spinner from '@cloudscape-design/components/spinner';
-import { api, ConversationSummary, ConversationDetail, Message, Tester } from '../api';
+import type { Brand, ConversationSummary, ConversationDetail, Message, Tester } from '../api';
+import { useApi, useSession } from '../session/SessionContext';
+import { usePoll } from '../session/usePoll';
+import { aAgentRole } from '../agentRole';
 import { getAccentColor } from '../theme';
 import MessageJsonModal from '../components/MessageJsonModal';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 
-export default function Conversations({ onError }: { onError: (e: string) => void }) {
+export default function Conversations({
+  brand,
+  onError,
+}: {
+  brand: Brand | null;
+  onError: (e: string) => void;
+}) {
+  const api = useApi();
+  const { track, multi } = useSession();
   const [list, setList] = useState<ConversationSummary[]>([]);
   const [sel, setSel] = useState<string>('');
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
@@ -29,21 +40,40 @@ export default function Conversations({ onError }: { onError: (e: string) => voi
   // hash -> real phone (needed to reply / switch mode)
   const phoneFor = (hash: string) => testers.find((t) => t.phone_hash === hash)?.phone || '';
 
+  // The tester load is tracked (it counts toward the switch's loading state)
+  // and stays silent on failure, as before. A tracked failure in multi mode has
+  // already been raised, labelled, by the session.
   useEffect(() => {
-    api.getTesters().then(setTesters).catch(() => {});
-    const load = () => api.getConversations().then((r) => setList(r.conversations)).catch((e) => onError(String(e)));
-    load();
-    const id = setInterval(load, 4000);
-    return () => clearInterval(id);
-  }, []);
+    track(api.getTesters(), 'recipients').then(setTesters).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
 
-  useEffect(() => {
-    if (!sel) return;
-    const load = () => api.getConversation(sel, true).then((d) => setDetail(d)).catch((e) => onError(String(e)));
-    load();
-    const id = setInterval(load, 3000);
-    return () => clearInterval(id);
-  }, [sel]);
+  // The first list load is tracked, so it must reject on failure for `track` to
+  // report it. In multi mode the session raises that failure itself; in single
+  // mode `track` is a pass-through, so the load raises it here as it always did.
+  // Later ticks raise every failure, as before.
+  const listFirst = useRef(true);
+  useEffect(() => { listFirst.current = true; }, [api]);
+  usePoll(
+    () => {
+      const first = listFirst.current;
+      listFirst.current = false;
+      return api.getConversations().then((r) => setList(r.conversations)).catch((e) => {
+        if (!(first && multi)) onError(String(e));
+        if (first) throw e;
+      });
+    },
+    4000,
+    [api],
+    { trackAs: 'conversations' },
+  );
+
+  usePoll(
+    () => api.getConversation(sel, true).then((d) => setDetail(d)).catch((e) => onError(String(e))),
+    3000,
+    [api, sel],
+    { enabled: !!sel },
+  );
 
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: 'smooth' }); }, [detail?.messages.length]);
 
@@ -214,7 +244,7 @@ export default function Conversations({ onError }: { onError: (e: string) => voi
                     value={draft}
                     onChange={({ detail: d }) => setDraft(d.value)}
                     onKeyDown={({ detail: d }) => { if (d.key === 'Enter') send(); }}
-                    placeholder={phone ? 'Reply as a care advocate…' : 'Phone not resolvable — add this number as a tester'}
+                    placeholder={phone ? `Reply as ${aAgentRole(brand)}…` : 'Phone not resolvable — add this number as a tester'}
                     disabled={!phone}
                   />
                 </div>

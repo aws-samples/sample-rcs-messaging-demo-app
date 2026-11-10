@@ -18,10 +18,16 @@ generators directly:
 - **macOS:** `bash scripts/launcher/make-desktop-shortcut.sh`
 - **Windows:** `powershell -ExecutionPolicy Bypass -File scripts\launcher\make-desktop-shortcut.ps1`
 
-A **`<BrandName> Dashboard`** icon appears on your Desktop (the brand name and,
-on macOS, the icon come from `content/brand.md` and `media/logo.png`). Put it
+A **`<BrandName> Dashboard`** icon appears on your Desktop (the brand name and
+the icon come from the default brand in `content/brand.md` (`defaultBrand`) and
+its `media/<id>/logo.png`, for example `media/anyhealth/logo.png`). Put it
 elsewhere with `DEST_DIR=~/Applications npm run create-shortcut` (macOS) or the
 `-DestDir` parameter (Windows).
+
+There is one shortcut and one dashboard, whatever number of brands you have
+deployed. The name and icon only label the shortcut: they do not choose which
+brand the dashboard shows. If you wire up more than one brand, the dashboard's
+brand picker switches between them.
 
 ## What double-clicking it does
 
@@ -34,6 +40,9 @@ elsewhere with `DEST_DIR=~/Applications npm run create-shortcut` (macOS) or the
    from the committed `web/package-lock.json`. If that fails it stops with an
    error and does not fall back to `npm install` (see the notes below).
 4. Opens a browser window to `http://localhost:<port>/` once the server responds.
+   The URL carries no brand. The dashboard opens on the brand named by a
+   `?brand=<id>` in the address, else the brand you used last in this browser,
+   else the first wired-up brand in id order.
 5. Leaves the server running in that terminal. **Ctrl-C** there stops it.
 
 ## Notes and caveats
@@ -59,10 +68,14 @@ elsewhere with `DEST_DIR=~/Applications npm run create-shortcut` (macOS) or the
 - **Browser choice (macOS):** it opens a new **Chrome** window if Chrome is
   installed (driven via AppleScript, which reliably reaches an already-running
   Chrome), otherwise your default browser. Windows/Linux use the default browser.
-- **The dashboard still needs its config.** The launcher only starts the server;
-  set `VITE_API_URL` / `VITE_API_KEY` in `web/.env` (or the app's Settings tab)
-  per [SETUP.md](../../SETUP.md) step 5, or the console loads but can't reach the
-  backend.
+- **The dashboard still needs its config.** The launcher only starts the server.
+  Connect each brand once, or the console loads but can't reach its backend:
+  run `node scripts/wire-dashboard-brand.mjs <Brand_Id> <REGION> [<PROFILE>]`
+  from the repo root after that brand's stack is deployed, which stores its URL
+  and API key locally. For a single brand you can instead set `VITE_API_URL` /
+  `VITE_API_KEY` in `web/.env` (or use the app's Settings tab) per
+  [SETUP.md](../../SETUP.md) step 5. SETUP.md has the details in
+  [Running more than one brand](../../SETUP.md#running-more-than-one-brand).
 - **Windows is best-effort.** The scripts are correct but are exercised less than
   the macOS path. If the `.lnk` misbehaves, you can always run
   `scripts\launcher\run-dev.bat` directly.

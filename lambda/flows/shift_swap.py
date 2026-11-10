@@ -64,20 +64,33 @@ def _pick_shift(phone_hash):
 
 def _pick_coworker(shift_id):
     shift = c.shift_by_id(shift_id)
-    label = f"{shift['day']}, {shift['date']} \u2013 {shift['start']}\u2013{shift['end']}" if shift else "your shift"
+    label = _shift_label(shift)
     cws = c.coworkers()
     suggestions = [
         {"Reply": {"Text": cw["name"].split(" ")[0], "PostbackData": f"swap_offer_{shift_id}_{cw['id']}"}}
         for cw in cws[:3]
     ]
+    # Each coworker's open shift (day and date computed from its dayOffset)
+    # is listed so the employee can see what they would be trading with.
+    roster = "\n".join(
+        f"{cw['name'].split(' ')[0]} \u2014 {cw['openShiftLabel']}"
+        for cw in cws[:3] if cw.get("openShiftLabel")
+    )
+    body = f"Offering: {label}\n\nWho would you like to offer it to?"
+    if roster:
+        body += f"\n\nOpen shifts:\n{roster}"
     return [{
-        "Content": {
-            "TextMessage": {
-                "Body": f"Offering: {label}\n\nWho would you like to offer it to?"
-            }
-        },
+        "Content": {"TextMessage": {"Body": body}},
         "Suggestions": suggestions,
     }]
+
+
+def _shift_label(shift):
+    """"Monday, October 29 \u2013 8:00 AM\u20134:00 PM". The day and date are
+    computed by c.shifts() from the shift's dayOffset."""
+    if not shift:
+        return "your shift"
+    return f"{shift['day']}, {shift['date']} \u2013 {shift['start']}\u2013{shift['end']}"
 
 
 def _submitted(phone_hash, shift_id, coworker_id):
@@ -88,7 +101,7 @@ def _submitted(phone_hash, shift_id, coworker_id):
 def _pending_card(pending):
     shift = c.shift_by_id(pending["my_shift_id"])
     cw = c.coworker_by_id(pending["coworker_id"])
-    shift_label = f"{shift['day']}, {shift['date']} \u2013 {shift['start']}\u2013{shift['end']}" if shift else "your shift"
+    shift_label = _shift_label(shift)
     cw_name = cw["name"] if cw else "your coworker"
     return [{
         "Content": {
@@ -116,7 +129,7 @@ def _pending_card(pending):
 def _accepted(pending):
     shift = c.shift_by_id(pending["my_shift_id"])
     cw = c.coworker_by_id(pending["coworker_id"])
-    shift_label = f"{shift['day']}, {shift['date']} \u2013 {shift['start']}\u2013{shift['end']}" if shift else "your shift"
+    shift_label = _shift_label(shift)
     cw_name = cw["name"] if cw else "Your coworker"
     return [{
         "Content": {
@@ -163,6 +176,10 @@ def on_postback(phone, phone_hash, postback_data):
         # positionally (coworker ids also contain underscores).
         rest = postback_data[len("swap_offer_"):]
         shift_id, coworker_id = _split_offer(rest)
+        if not shift_id or not c.coworker_by_id(coworker_id):
+            # A stale chip from an older schedule: start over rather than
+            # record an offer for a shift or coworker that no longer exists.
+            return _pick_shift(phone_hash)
         return _submitted(phone_hash, shift_id, coworker_id)
     if postback_data == "swap_status":
         pending = c.get_pending_swap(phone_hash)

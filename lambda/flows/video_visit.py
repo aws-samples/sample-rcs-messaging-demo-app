@@ -47,7 +47,9 @@ def _invite(phone_hash):
     # visit URL: the token is a 122-bit secret that grants join access to a
     # billed Chime meeting for 30 minutes, and anyone with CloudWatch read access
     # could otherwise lift a live one from the logs.
-    print(f"VIDEO_VISIT_INVITE phone_hash={phone_hash} token={token[:8]}…")
+    # The conversation hash is not logged either: it is an unsalted hash of the
+    # phone number, and the visit row in DynamoDB already links the two.
+    print(f"VIDEO_VISIT_INVITE token={token[:8]}…")
     return invite(token)
 
 

@@ -7,7 +7,9 @@ import Box from '@cloudscape-design/components/box';
 import Container from '@cloudscape-design/components/container';
 import Icon from '@cloudscape-design/components/icon';
 import Popover from '@cloudscape-design/components/popover';
-import { api, Tester, Health, TypingRecipient } from '../api';
+import type { Tester, Health, TypingRecipient } from '../api';
+import { useApi } from '../session/SessionContext';
+import { usePoll } from '../session/usePoll';
 
 const HEALTH_POLL_MS = 30000;
 
@@ -52,6 +54,7 @@ export default function StatusBar({
   error: string;
   onDismissError: () => void;
 }) {
+  const api = useApi();
   const [status, setStatus] = useState<string>('');
   const [picking, setPicking] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -61,7 +64,8 @@ export default function StatusBar({
   useEffect(() => {
     if (!phone) { setStatus(''); return; }
     refreshStatus();
-  }, [phone]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, phone]);
 
   async function toggleMode() {
     if (!phone) return;
@@ -74,12 +78,11 @@ export default function StatusBar({
   // independent of which device is targeted, so this polls regardless of
   // whether a phone is selected — an operator should see it before they even
   // pick a recipient.
-  useEffect(() => {
-    const load = () => api.getHealth().then(setHealth).catch(() => {});
-    load();
-    const id = setInterval(load, HEALTH_POLL_MS);
-    return () => clearInterval(id);
-  }, []);
+  usePoll(
+    () => api.getHealth().then(setHealth).catch(() => {}),
+    HEALTH_POLL_MS,
+    [api],
+  );
 
   async function refreshStatus() {
     setChecking(true);
@@ -203,16 +206,16 @@ function TypingIndicator({ typing, testers }: { typing: TypingRecipient[]; teste
           because the app imports no stylesheet of its own but Cloudscape's, and
           it honours reduced-motion. */}
       <style>{`
-        @keyframes anyhealth-typing-dot { 0%,80%,100% { opacity: .25 } 40% { opacity: 1 } }
-        .anyhealth-typing-dot { animation: anyhealth-typing-dot 1.2s ease-in-out infinite }
-        @media (prefers-reduced-motion: reduce) { .anyhealth-typing-dot { animation: none } }
+        @keyframes rcs-demo-typing-dot { 0%,80%,100% { opacity: .25 } 40% { opacity: 1 } }
+        .rcs-demo-typing-dot { animation: rcs-demo-typing-dot 1.2s ease-in-out infinite }
+        @media (prefers-reduced-motion: reduce) { .rcs-demo-typing-dot { animation: none } }
       `}</style>
       <Box color="text-status-info" fontSize="body-s">{who}</Box>
       <span aria-hidden="true" style={{ display: 'inline-flex', gap: 3, paddingBottom: 2 }}>
         {[0, 1, 2].map((i) => (
           <span
             key={i}
-            className="anyhealth-typing-dot"
+            className="rcs-demo-typing-dot"
             style={{
               width: 4,
               height: 4,
@@ -330,12 +333,13 @@ function ModeIndicator({ mode, changing, onToggle }: { mode: string; changing: b
 // of as mystifying behaviour. See scripts/version.mjs for the scheme (the fourth
 // segment is a commit count, so it moves by itself).
 function VersionIndicator() {
+  const api = useApi();
   const [backend, setBackend] = useState<string>('');
   const frontend = import.meta.env.VITE_FE_VERSION || 'unknown';
 
   useEffect(() => {
     api.getVersion().then((v) => setBackend(v.backend)).catch(() => setBackend('?'));
-  }, []);
+  }, [api]);
 
   // Only the hand-maintained part is compared. The commit counts are per-area
   // and count different paths, so they are never equal and a mismatch there

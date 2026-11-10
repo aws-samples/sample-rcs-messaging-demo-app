@@ -6,15 +6,16 @@ import ExpandableSection from '@cloudscape-design/components/expandable-section'
 import SegmentedControl from '@cloudscape-design/components/segmented-control';
 import Spinner from '@cloudscape-design/components/spinner';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { api, AgentIdentity, Brand, RcsCardContent, RcsMessage } from '../api';
+import type { AgentIdentity, ApiClient, Brand, RcsCardContent, RcsMessage } from '../api';
+import { useApi } from '../session/SessionContext';
 import PhonePreview, { Platform } from './PhonePreview';
 
 // GET /api/vignettes/preview returns Media.FileUrl as a bare S3 object key
 // (e.g. "media/rx-refill.png") rather than a full URL, since the backend has
 // no reliable base URL of its own to build one from (API_BASE_URL is only
-// injected on the channel-adapter Lambda). Resolve it here via the same
-// api.mediaUrl() helper the rest of the dashboard uses.
-function resolveMediaKeys(message: RcsMessage): RcsMessage {
+// injected on the channel-adapter Lambda). Resolve it here via the session
+// client's mediaUrl(), which builds from the session's bound base URL.
+function resolveMediaKeys(message: RcsMessage, api: ApiClient): RcsMessage {
   const fix = (card?: RcsCardContent): RcsCardContent | undefined =>
     card?.Media?.FileUrl && !card.Media.FileUrl.startsWith('http')
       ? { ...card, Media: { ...card.Media, FileUrl: api.mediaUrl(card.Media.FileUrl) } }
@@ -55,6 +56,7 @@ export default function PhonePreviewPopover({
   brand?: Brand | null;
   identity?: AgentIdentity | null;
 }) {
+  const api = useApi();
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'unavailable' | 'invalid' | 'error'>('idle');
   const [messages, setMessages] = useState<RcsMessage[]>([]);
@@ -65,7 +67,7 @@ export default function PhonePreviewPopover({
 
   // Prefer the identity read live off the AWS registration — that is what a
   // handset will actually render. content/brand.md is the fallback, and it is
-  // usually a different brand entirely (the demo ships "AnyHealth"; the agent
+  // usually a different brand entirely (the demo ships fictional brands; the agent
   // sending the message carries whatever the account registered), so the two
   // are labelled differently below rather than blended.
   const live = identity?.source === 'live';
@@ -89,7 +91,7 @@ export default function PhonePreviewPopover({
       // problem that would stop the message from being sent.
       if (preview.error) { setInvalidReason(preview.error); setState('invalid'); return; }
       if (!preview.available || !preview.messages?.length) { setState('unavailable'); return; }
-      setMessages(preview.messages.map(resolveMediaKeys));
+      setMessages(preview.messages.map((m) => resolveMediaKeys(m, api)));
       setState('ready');
     } catch {
       setState('error');

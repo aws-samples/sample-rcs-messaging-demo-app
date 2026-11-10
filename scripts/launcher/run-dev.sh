@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# AnyHealth local dashboard launcher (macOS/Linux).
+# Demo local dashboard launcher (macOS/Linux).
 #
 # Starts the Vite dev server for web/ and opens a browser window to it.
 # Self-contained and path-independent: it locates the repo from its own
@@ -148,7 +148,7 @@ open_browser() {
 }
 open_browser &
 
-echo "AnyHealth dashboard starting on $URL"
+echo "Demo dashboard starting on $URL"
 echo "Press Ctrl-C to stop."
 echo ""
 
