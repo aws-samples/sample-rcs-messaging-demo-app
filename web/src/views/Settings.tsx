@@ -17,9 +17,13 @@ import Table from '@cloudscape-design/components/table';
 import Badge from '@cloudscape-design/components/badge';
 import Textarea from '@cloudscape-design/components/textarea';
 import Modal from '@cloudscape-design/components/modal';
-import { api, AgentIdentity, ApiError, Brand, Keyword, KeywordAction, Tester } from '../api';
-import { getApiUrl, setApiUrl, getApiKey, setApiKey } from '../config';
+import { AgentIdentity, ApiError, Brand, Keyword, KeywordAction, Tester } from '../api';
+import { registry, useRegistry } from '../connections/registry';
+import { brandLabel, validateApiUrl } from '../connections/resolve';
+import type { ValueSource } from '../connections/types';
+import { useSession } from '../session/SessionContext';
 import PhonePreviewPopover from '../components/PhonePreviewPopover';
+import { aAgentRole } from '../agentRole';
 
 export default function Settings({
   brand,
@@ -32,9 +36,25 @@ export default function Settings({
   phone: string;
   onError: (e: string) => void;
 }) {
-  const [apiUrl, setApiUrlVal] = useState(getApiUrl());
-  const [apiKey, setApiKeyVal] = useState(getApiKey());
+  const { api, connection, multi, label, prefix } = useSession();
+  const { connections } = useRegistry();
+  // The fields start from this session's connection. Unsaved edits are lost on
+  // a Brand_Switch because the session (and with it this view) remounts.
+  const [apiUrl, setApiUrlVal] = useState(connection.apiUrl);
+  const [apiKey, setApiKeyVal] = useState(connection.apiKey);
+  // Reveal state is local: it resets on a switch (remount) and on a tab change
+  // (Tabs renders only the active tab's content).
+  const [showKey, setShowKey] = useState(false);
+  const [urlError, setUrlError] = useState('');
   const [savedMsg, setSavedMsg] = useState('');
+
+  // Section headers name the connection being edited in multi mode. A
+  // Legacy_Connection has no Brand_Id, so it gets the label only.
+  const scope = !multi
+    ? ''
+    : connection.brandId !== null
+      ? ` — ${label} (${connection.brandId})`
+      : ` — ${label}`;
 
   // Operator diagnostics/experiments live here rather than in the Use Case
   // Examples list. Each sends the same way the Demo tab sends anything —
@@ -53,12 +73,12 @@ export default function Settings({
     return t?.name ? `${t.name} (${phone})` : phone;
   })();
 
-  async function sendDiagnostic(trigger: string, label: string) {
+  async function sendDiagnostic(trigger: string, what: string) {
     setDiagBusy(trigger);
     setDiagMsg('');
     try {
       await api.trigger(phone, trigger);
-      setDiagMsg(`Sent ${label} to ${currentLabel}.`);
+      setDiagMsg(prefix(`Sent ${what} to ${currentLabel}.`));
     } catch (e) {
       onError(String(e));
     } finally {
@@ -66,14 +86,39 @@ export default function Settings({
     }
   }
 
+  function labelOf(id: string): string {
+    const c = connections.find((x) => x.id === id);
+    return c ? brandLabel(c) : id;
+  }
+
+  // Names the higher-precedence source that keeps a saved value from taking
+  // effect. File names and variable names only, never a value.
+  function inactiveNote(what: 'API URL' | 'API key', src: ValueSource | undefined): string {
+    if (!src) return '';
+    let where = '';
+    if (src.kind === 'store') where = src.file || '.deploy/dashboard-brands.json';
+    else if (src.kind === 'envFile') where = src.file || `web/.env.${connection.brandId ?? '<id>'}`;
+    else if (src.kind === 'viteEnv') where = `${src.name} (web/.env or the shell)`;
+    else return '';
+    return ` It is not in use: ${where} also defines the ${what} and takes precedence. Change it there to change what the dashboard uses.`;
+  }
+
   function saveApiUrl() {
-    if (!apiUrl.trim()) return;
-    setApiUrl(apiUrl.trim());
-    setSavedMsg('API URL saved. Reload the page for it to take effect everywhere.');
+    const v = validateApiUrl(apiUrl, connection.id, connections, labelOf);
+    if (!v.ok) { setUrlError(v.error); return; }
+    setUrlError('');
+    const r = registry.saveUrl(connection.id, v.url);
+    if (!r.saved) { setUrlError('This connection is no longer available.'); return; }
+    setApiUrlVal(v.url);
+    setSavedMsg(prefix('API URL saved.') + inactiveNote('API URL', r.inactive));
   }
   function saveApiKey() {
-    setApiKey(apiKey.trim());
-    setSavedMsg('API key saved.');
+    const k = apiKey.trim();
+    const r = registry.saveKey(connection.id, k);
+    if (!r.saved) return;
+    setApiKeyVal(k);
+    const base = k === '' ? 'API key removed. This connection now shows "API key missing".' : 'API key saved.';
+    setSavedMsg(prefix(base) + inactiveNote('API key', r.inactive));
   }
 
   return (
@@ -88,7 +133,7 @@ export default function Settings({
 
       <BrandIdentityPanel />
 
-      <Container header={<Header variant="h3">Deployment connection</Header>}>
+      <Container header={<Header variant="h3">{`Deployment connection${scope}`}</Header>}>
         <SpaceBetween size="m">
           <KeyValuePairs
             columns={2}
@@ -107,18 +152,18 @@ export default function Settings({
           />
           <Box color="text-body-secondary" fontSize="body-s">
             The account and Region the API below runs in — where the RCS agent, Lambdas, table and
-            bucket are deployed. Shown once a valid API key is set and the page has been reloaded.
-            A dash means the key is missing or wrong, or the deployed backend is an older build that
+            bucket are deployed. Shown once a valid API key is set. A dash means the key is missing or wrong, or the deployed backend is an older build that
             does not return this field (redeploy to update it).
           </Box>
           <Box color="text-body-secondary" fontSize="body-s">
-            The base URL of your deployed AnyHealth API — the <Box variant="code" display="inline">ApiUrl</Box>{' '}
-            output from <Box variant="code" display="inline">cdk deploy</Box>. A URL saved here is used only
-            when <Box variant="code" display="inline">VITE_API_URL</Box> was not set in{' '}
-            <Box variant="code" display="inline">web/.env</Box>; if it was, that value wins.
+            The base URL of your deployed demo API — the <Box variant="code" display="inline">ApiUrl</Box>{' '}
+            output from <Box variant="code" display="inline">cdk deploy</Box>. A URL saved here applies
+            immediately, unless a value from <Box variant="code" display="inline">.deploy/dashboard-brands.json</Box>,
+            a <Box variant="code" display="inline">web/.env</Box> file or the shell defines the same
+            URL; if one does, that value wins and this page says so when you save.
           </Box>
           <Form>
-            <FormField label="API URL">
+            <FormField label="API URL" errorText={urlError || undefined}>
               <Input
                 value={apiUrl}
                 onChange={({ detail }) => setApiUrlVal(detail.value)}
@@ -130,11 +175,11 @@ export default function Settings({
         </SpaceBetween>
       </Container>
 
-      <Container header={<Header variant="h3">API key</Header>}>
+      <Container header={<Header variant="h3">{`API key${scope}`}</Header>}>
         <SpaceBetween size="m">
           <Box color="text-body-secondary" fontSize="body-s">
             Shared secret required for anything that sends messages, changes demo data, <em>or
-            returns recipient data</em>. That means sending use case examples, replying as a care advocate,
+            returns recipient data</em>. That means sending use case examples, replying as {aAgentRole(brand)},
             taking over/releasing conversations, adding recipients and resetting demo data — and also
             loading the Recipients list, conversation transcripts, received media, and the account's
             RCS spend limit. Without it those tabs will show an error rather than data. Retrieve it
@@ -145,16 +190,29 @@ export default function Settings({
             </Box>
             {' '}— the{' '}
             <Box variant="code" display="inline">--region</Box> is required, because the secret is in
-            the region you deployed to rather than your CLI default.
+            the region you deployed to rather than your CLI default. A key saved here applies to the
+            next request.
           </Box>
           <Form>
-            <FormField label="API key">
-              <Input
-                value={apiKey}
-                onChange={({ detail }) => setApiKeyVal(detail.value)}
-                type="password"
-                placeholder="API key"
-              />
+            <FormField label="API key" description="Saving an empty key removes the stored key.">
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div style={{ flex: 1 }}>
+                  <Input
+                    value={apiKey}
+                    onChange={({ detail }) => setApiKeyVal(detail.value)}
+                    type={showKey ? 'text' : 'password'}
+                    autoComplete={false}
+                    placeholder="API key"
+                    ariaLabel="API key"
+                  />
+                </div>
+                <Button
+                  ariaLabel={showKey ? 'Hide API key' : 'Show API key'}
+                  onClick={() => setShowKey((v) => !v)}
+                >
+                  {showKey ? 'Hide' : 'Show'}
+                </Button>
+              </div>
             </FormField>
           </Form>
           <Button variant="primary" onClick={saveApiKey}>Save API key</Button>
@@ -302,6 +360,9 @@ function keywordFailure(e: unknown, verb: 'save' | 'delete'): string {
 }
 
 function CustomKeywordsPanel() {
+  const { api, multi, label, prefix } = useSession();
+  // Error text already carrying the label (a missing-key message) is not labelled twice.
+  const labelled = (m: string) => (multi && m.startsWith(`${label}: `) ? m : prefix(m));
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -338,8 +399,8 @@ function CustomKeywordsPanel() {
     setBusy(true);
     try {
       const r = await api.createKeyword(keyword.trim(), message.trim(), action);
-      if (r.error) { setFormError(r.error); return; }
-      setSavedMsg(`Saved keyword "${r.keyword}".`);
+      if (r.error) { setFormError(labelled(r.error)); return; }
+      setSavedMsg(prefix(`Saved keyword "${r.keyword}".`));
       setKeyword('');
       setMessage('');
       setAction('AUTOMATIC_RESPONSE');
@@ -347,7 +408,7 @@ function CustomKeywordsPanel() {
     } catch (e) {
       // Shown under the form, where the operator just clicked Save; the typed
       // keyword and message stay put so they can fix them and retry.
-      setFormError(keywordFailure(e, 'save'));
+      setFormError(labelled(keywordFailure(e, 'save')));
     } finally {
       setBusy(false);
     }
@@ -361,14 +422,14 @@ function CustomKeywordsPanel() {
     setSavedMsg('');
     try {
       const r = await api.deleteKeyword(k.keyword);
-      if (r.error) { setDeleteError(r.error); return; }
-      setSavedMsg(`Deleted keyword "${k.keyword}".`);
+      if (r.error) { setDeleteError(labelled(r.error)); return; }
+      setSavedMsg(prefix(`Deleted keyword "${k.keyword}".`));
       setPendingDelete(null);
       await load();
     } catch (e) {
       // Shown inside the dialog, which stays open, so the failure is in front
       // of the operator rather than behind a closed modal.
-      setDeleteError(keywordFailure(e, 'delete'));
+      setDeleteError(labelled(keywordFailure(e, 'delete')));
     } finally {
       setDeleting(false);
     }
@@ -419,7 +480,7 @@ function CustomKeywordsPanel() {
         {loadError && (
           <Alert type="error" header="Couldn't load keywords">
             {loadError}
-            {' '}This read needs the API key — set it above and reload if it isn't set.
+            {' '}This read needs the API key — set it above if it isn't set, then reopen this tab.
           </Alert>
         )}
         {savedMsg && <Alert type="success" dismissible onDismiss={() => setSavedMsg('')}>{savedMsg}</Alert>}
@@ -535,6 +596,7 @@ function CustomKeywordsPanel() {
       >
         {pendingDelete && (
           <SpaceBetween size="s">
+            {multi && <Box>Brand: {label}</Box>}
             <Box>
               Remove the keyword <Box variant="code" display="inline">{pendingDelete.keyword}</Box> from
               the agent? Recipients who text it will no longer get an automatic response.
@@ -550,7 +612,7 @@ function CustomKeywordsPanel() {
 // The identity read live off the AWS registration — as opposed to the panel
 // below, which shows what content/brand.md *says* was submitted. Both are worth
 // showing because they routinely disagree: brand.md is the demo's fictional
-// AnyHealth, while the agent doing the sending carries whatever this AWS account
+// selected brand, while the agent doing the sending carries whatever this AWS account
 // actually registered. The live values are the ones on the handset, and are what
 // the device previews use.
 //
@@ -577,7 +639,7 @@ function LiveAgentIdentityPanel({ identity }: { identity: AgentIdentity | null }
           <Box color="text-body-secondary" fontSize="body-s">
             {identity?.error
               ? identity.error
-              : 'This read is authenticated, so it needs the API key below. Set it and reload.'}
+              : 'This read is authenticated, so it needs the API key below. Set it, then reopen this tab.'}
           </Box>
         </SpaceBetween>
       </Container>
@@ -714,6 +776,7 @@ function LiveAgentIdentityPanel({ identity }: { identity: AgentIdentity | null }
 // senderDisplayName concrete -- it is the string on the handset, while the
 // console's "friendly name" is only a tag.
 function RcsRegistrationPanel({ brand }: { brand: Brand | null }) {
+  const { api } = useSession();
   const reg = brand?.registration;
   if (!reg) {
     return (
@@ -895,8 +958,7 @@ function BrandIdentityPanel() {
         <Box color="text-body-secondary" fontSize="body-s">
           Read-receipt caveat while you're testing: on iOS, <strong>Send Read Receipts</strong> is a
           per-recipient setting that is off by default, so a Read column at zero can reflect the
-          recipient's toggle rather than the event wiring. On a testing agent, read events appear
-          once the agent is launched in a country.
+          recipient's toggle rather than the event wiring.
         </Box>
       </SpaceBetween>
     </Container>

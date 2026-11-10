@@ -5,7 +5,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import Link from '@cloudscape-design/components/link';
 import type { Message } from '../api';
 
-// Classifies an inbound/outbound conversation message the same way the AnyHealth
+// Classifies an inbound/outbound conversation message the same way the
 // dashboard does, so operators see the same vocabulary when discussing how a
 // vignette's payload gets built: an outbound message is literally the body
 // passed to SendRcsMessage's RcsMessageContent; inbound messages are shown as

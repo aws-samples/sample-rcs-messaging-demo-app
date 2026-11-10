@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Header from '@cloudscape-design/components/header';
 import Button from '@cloudscape-design/components/button';
 import Alert from '@cloudscape-design/components/alert';
@@ -7,7 +7,9 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import Box from '@cloudscape-design/components/box';
 import Popover from '@cloudscape-design/components/popover';
 import Spinner from '@cloudscape-design/components/spinner';
-import { api, AgentIdentity, Brand, LatestMedia, Tester, Vignette } from '../api';
+import type { AgentIdentity, ApiClient, Brand, LatestMedia, Tester, Vignette } from '../api';
+import { isTrackedLoadError, useApi, useSession } from '../session/SessionContext';
+import { usePoll } from '../session/usePoll';
 import PhonePreviewPopover from '../components/PhonePreviewPopover';
 import PiiGuidanceTooltip from '../components/PiiGuidanceTooltip';
 import FeatureTag from '../components/FeatureTag';
@@ -29,10 +31,12 @@ const PII_GUIDANCE_VARIANT: Record<string, 'native' | 'webview' | 'outbound'> = 
 };
 
 // Vignette ids whose card shows a "latest photo received" preview — the
-// same two rich-media vignettes that have a PII_GUIDANCE_VARIANT entry
-// above, kept as a separate set since the concepts are related but not
-// identical (a card could plausibly want one badge without the other).
-const MEDIA_PREVIEW_VIGNETTES = new Set(['photo_submission', 'insurance_upload']);
+// two rich-media vignettes that have a PII_GUIDANCE_VARIANT entry above, plus
+// Identity Capture, which previews one or two sides (IdCapturePreview), and
+// Site Evidence, which previews the latest ticket's items (SiteEvidencePreview).
+// Kept as a separate set since the concepts are related but not identical (a
+// card can want one badge without the other).
+const MEDIA_PREVIEW_VIGNETTES = new Set(['photo_submission', 'insurance_upload', 'identity_capture', 'site_evidence']);
 
 // The one vignette whose send button does not go through /api/trigger. A video
 // visit has two live participants, so the dashboard has to hold the visit token
@@ -74,23 +78,59 @@ export default function Demo({
   const [busy, setBusy] = useState<string>('');
   const [msg, setMsg] = useState<string>('');
   const [latestMedia, setLatestMedia] = useState<LatestMedia>({});
-  const [visitToken, setVisitToken] = useState<string | null>(null);
+  // The open video visit, with the client it was started on: every later join,
+  // status, ping and end request stays bound to that brand's stack.
+  const [visit, setVisit] = useState<{ token: string; client: ApiClient } | null>(null);
   // Which Mystery Box's reveal modal is open (null = none).
   const [mysteryBox, setMysteryBox] = useState<Vignette | null>(null);
 
-  useEffect(() => { api.getVignettes().then(setVignettes).catch((e) => onError(String(e))); }, []);
-  useEffect(() => { api.getTesters().then(setTesters).catch(() => {}); }, [phone]);
+  const api = useApi();
+  const { track, prefix, reportVideo } = useSession();
+
+  // Only the first tester load counts toward the switch's loading state; the
+  // reloads after a target change stay silent on failure, as before.
+  const testersTracked = useRef(false);
+
+  useEffect(() => {
+    track(api.getVignettes(), 'use case examples')
+      .then(setVignettes)
+      // A tracked failure was already raised (labelled) by the session.
+      .catch((e) => { if (!isTrackedLoadError(e)) onError(String(e)); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
+  useEffect(() => {
+    let p = api.getTesters();
+    if (!testersTracked.current) {
+      testersTracked.current = true;
+      p = track(p, 'recipients');
+    }
+    p.then(setTesters).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, phone]);
 
   // Polled rather than fetched once — a member can send a native photo or
   // finish a webview upload at any time while this tab is open, and there's
-  // no push channel into the dashboard to react to that immediately.
+  // no push channel into the dashboard to react to that immediately. Runs only
+  // while a target phone is set. The first call of each run is tracked, so it
+  // must reject on failure; later ticks stay silent.
+  const mediaFirst = useRef(true);
   useEffect(() => {
-    if (!phone) { setLatestMedia({}); return; }
-    const load = () => api.getLatestMedia(phone).then(setLatestMedia).catch(() => {});
-    load();
-    const id = setInterval(load, 5000);
-    return () => clearInterval(id);
-  }, [phone]);
+    mediaFirst.current = true;
+    if (!phone) setLatestMedia({});
+  }, [api, phone]);
+  usePoll(
+    () => {
+      const first = mediaFirst.current;
+      mediaFirst.current = false;
+      return api.getLatestMedia(phone).then(setLatestMedia).catch((e) => { if (first) throw e; });
+    },
+    5000,
+    [api, phone],
+    { trackAs: 'latest media', enabled: !!phone },
+  );
+
+  // A visit this view no longer shows is no longer open to the switch guard.
+  useEffect(() => () => reportVideo(null), [reportVideo]);
 
   // Same "name (phone)" label used by the status bar, so the button text
   // matches whatever the operator sees as their current target there.
@@ -101,27 +141,36 @@ export default function Demo({
   })();
 
   async function trigger(t: string) {
+    const client = api; // bound at the confirming action
     setBusy(t); setMsg('');
-    try { await api.trigger(phone, t); setMsg(`Sent “${t}” to your device.`); }
+    try { await client.trigger(phone, t); setMsg(prefix(`Sent “${t}” to your device.`)); }
     catch (e) { onError(String(e)); } finally { setBusy(''); }
   }
   // Sends the invitation and opens the clinician-side client on the same visit
   // token, so the operator is already in the room when the member taps the chip.
   async function startVideoVisit() {
+    const client = api; // bound at the confirming click
     setBusy(VIDEO_VISIT_VIGNETTE); setMsg('');
     try {
-      const r = await api.startVideoVisit(phone);
-      setVisitToken(r.visit);
-      setMsg(`Video visit invitation sent to ${currentLabel}.`);
+      const r = await client.startVideoVisit(phone);
+      const v = { token: r.visit, client };
+      setVisit(v);
+      reportVideo(v);
+      setMsg(prefix(`Video visit invitation sent to ${currentLabel}.`));
     } catch (e) { onError(String(e)); } finally { setBusy(''); }
   }
+  function dismissVisit() {
+    setVisit(null);
+    reportVideo(null);
+  }
   async function reset() {
-    if (!confirm('Clear all demo conversations, carts, codes, and uploaded media?')) return;
+    if (!confirm(prefix('Clear all demo conversations, carts, codes, and uploaded media?'))) return;
+    const client = api; // bound at the confirming action
     try {
-      const result = await api.reset();
+      const result = await client.reset();
       setLatestMedia({});
       const noun = result.deleted_media_objects === 1 ? 'object' : 'objects';
-      setMsg(`Demo data reset. Cleared ${result.deleted_media_objects} uploaded media ${noun}.`);
+      setMsg(prefix(`Demo data reset. Cleared ${result.deleted_media_objects} uploaded media ${noun}.`));
     } catch (e) {
       onError(String(e));
     }
@@ -247,9 +296,13 @@ export default function Demo({
               content: (v: Vignette) =>
                 MYSTERY_VIGNETTES.has(v.id)
                   ? null
-                  : MEDIA_PREVIEW_VIGNETTES.has(v.id)
-                    ? <LatestMediaPreview entry={latestMedia[v.id as 'photo_submission' | 'insurance_upload']} />
-                    : null,
+                  : v.id === 'identity_capture'
+                    ? <IdCapturePreview entry={latestMedia.identity_capture} />
+                    : v.id === 'site_evidence'
+                    ? <SiteEvidencePreview entry={latestMedia.site_evidence} />
+                    : MEDIA_PREVIEW_VIGNETTES.has(v.id)
+                      ? <LatestMediaPreview entry={latestMedia[v.id as 'photo_submission' | 'insurance_upload']} />
+                      : null,
             },
           ],
         };
@@ -267,9 +320,9 @@ export default function Demo({
       })()}
 
       <VideoVisitModal
-        visit={visitToken}
+        visit={visit}
         phoneLabel={currentLabel}
-        onDismiss={() => setVisitToken(null)}
+        onDismiss={dismissVisit}
       />
 
       <MysteryBoxModal
@@ -328,6 +381,123 @@ function LatestMediaPreview({ entry }: { entry?: import('../api').LatestMediaEnt
                 is unavailable, which is only true once conversion is done. */}
             {entry.classification || (entry.converting ? 'Analyzing photo…' : '(classification unavailable)')}
           </Box>
+        </div>
+      </SpaceBetween>
+      <ImagePreviewModal image={imagePreview} onDismiss={() => setImagePreview(null)} />
+    </>
+  );
+}
+
+// Identity Capture preview: the ID type the recipient chose and one slot per
+// side it needs (one for a passport, two for a license), from the latest visit
+// to the capture page. A side not uploaded yet shows an empty slot, so the
+// operator can see the capture is still waiting on it.
+function IdCapturePreview({ entry }: { entry?: import('../api').IdCaptureEntry }) {
+  const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
+  if (!entry || entry.images.length === 0) return null;
+  const done = entry.images.filter((img) => img.preview_url).length;
+  const total = entry.images.length;
+  return (
+    <>
+      <SpaceBetween size="xs">
+        <Box fontWeight="bold" fontSize="body-s">
+          {entry.id_label}: {done} of {total} {total === 1 ? 'photo' : 'photos'}
+        </Box>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${total}, minmax(0, 1fr))`, gap: 8, maxWidth: total * 180 }}>
+          {entry.images.map((img) => {
+            const alt = `${entry.id_label}, ${img.label}`;
+            return (
+              <div key={img.side} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                {img.preview_url ? (
+                  <button
+                    type="button"
+                    aria-label={`Open ${alt} full size`}
+                    title="Open full size"
+                    onClick={() => setImagePreview({ src: img.preview_url!, alt })}
+                    style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', cursor: 'zoom-in' }}
+                  >
+                    <img
+                      src={img.preview_url}
+                      alt={alt}
+                      style={{ display: 'block', width: '100%', height: 110, objectFit: 'cover', borderRadius: 8, border: '1px solid #e4e9e9' }}
+                    />
+                  </button>
+                ) : (
+                  <div style={{ height: 110, borderRadius: 8, border: '1px dashed #c6cdcd', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 6, textAlign: 'center' }}>
+                    {img.converting ? (
+                      <SpaceBetween direction="horizontal" size="xxs" alignItems="center">
+                        <Spinner />
+                        <Box fontSize="body-s" color="text-body-secondary">Converting…</Box>
+                      </SpaceBetween>
+                    ) : (
+                      <Box fontSize="body-s" color="text-body-secondary">
+                        {img.status === 'FAILED' ? 'Upload failed' : 'Waiting for this side'}
+                      </Box>
+                    )}
+                  </div>
+                )}
+                <Box fontWeight="bold" fontSize="body-s">{img.label}</Box>
+                {img.preview_url && (
+                  <Box fontSize="body-s" color={img.classification ? undefined : 'text-body-secondary'}>
+                    {img.classification || (img.converting ? 'Analyzing photo…' : '(classification unavailable)')}
+                  </Box>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </SpaceBetween>
+      <ImagePreviewModal image={imagePreview} onDismiss={() => setImagePreview(null)} />
+    </>
+  );
+}
+
+// Site Evidence preview: the latest ticket (number and evidence type) and one
+// tile per item logged on it, in order. A photo shows as a thumbnail with its
+// description; a video or other file gets a labelled tile, because the
+// converter makes no preview for it. The ticket stays after the sender taps
+// Done, so the operator can still see what was logged.
+function SiteEvidencePreview({ entry }: { entry?: import('../api').SiteEvidenceEntry }) {
+  const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
+  if (!entry || entry.items.length === 0) return null;
+  const count = entry.items.length;
+  return (
+    <>
+      <SpaceBetween size="xs">
+        <Box fontWeight="bold" fontSize="body-s">
+          Ticket {entry.ticket} · {entry.kind_label} · {count} {count === 1 ? 'item' : 'items'}
+        </Box>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(count, 3)}, minmax(0, 1fr))`, gap: 8, maxWidth: Math.min(count, 3) * 180 }}>
+          {entry.items.map((item) => {
+            const alt = `Ticket ${entry.ticket}, item ${item.n}`;
+            return (
+              <div key={item.n} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                {item.preview_url ? (
+                  <button
+                    type="button"
+                    aria-label={`Open ${alt} full size`}
+                    title="Open full size"
+                    onClick={() => setImagePreview({ src: item.preview_url!, alt })}
+                    style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', cursor: 'zoom-in' }}
+                  >
+                    <img
+                      src={item.preview_url}
+                      alt={alt}
+                      style={{ display: 'block', width: '100%', height: 110, objectFit: 'cover', borderRadius: 8, border: '1px solid #e4e9e9' }}
+                    />
+                  </button>
+                ) : (
+                  <div style={{ height: 110, borderRadius: 8, border: '1px dashed #c6cdcd', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 6, textAlign: 'center' }}>
+                    <Box fontSize="body-s" color="text-body-secondary">
+                      {item.type === 'video' ? 'Video received (no preview)' : item.type === 'file' ? 'File received (no preview)' : 'No preview available'}
+                    </Box>
+                  </div>
+                )}
+                <Box fontWeight="bold" fontSize="body-s">Item {item.n}</Box>
+                {item.classification && <Box fontSize="body-s">{item.classification}</Box>}
+              </div>
+            );
+          })}
         </div>
       </SpaceBetween>
       <ImagePreviewModal image={imagePreview} onDismiss={() => setImagePreview(null)} />

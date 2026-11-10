@@ -1,4 +1,6 @@
-import { getApiUrl, getApiKey } from './config';
+import { registry } from './connections/registry';
+import { normalizeUrl } from './connections/resolve';
+import type { BrandConnection } from './connections/types';
 
 // One contact action submitted on the RCS registration. These render as the
 // Call / Website / Email buttons on the agent profile in the recipient's
@@ -30,8 +32,8 @@ export interface RcsRegistrationInfo {
 // The identity read live off the AWS RCS registration — what a handset actually
 // renders — as opposed to RcsRegistrationInfo above, which is what
 // content/brand.md *says* was submitted. The two routinely differ: the demo's
-// placeholder brand is "AnyHealth" while the agent doing the sending carries
-// whatever was registered on the account.
+// selected brand is a fictional placeholder while the agent doing the sending
+// carries whatever was registered on the account.
 //
 // `source` is 'live' when the read succeeded and 'unavailable' otherwise (no
 // API key, missing IAM permission, no testing registration yet), in which case
@@ -86,6 +88,8 @@ export interface Brand {
   // Recipients tab can show the exact text and warn when a pasted deep link
   // carries a different one.
   deepLinkKeyword: string;
+  /** What the human in a live-agent handover is called for this brand. */
+  liveAgentRole?: string;
   /** Absent on older deployments whose Lambda predates the registration panel. */
   registration?: RcsRegistrationInfo;
 }
@@ -202,10 +206,55 @@ export interface LatestMediaEntry {
   updated: string;
 }
 
-// Keyed by vignette id (photo_submission | insurance_upload) — see
+// One side of an Identity Capture visit. status is MISSING for a side the ID
+// type needs that has not been uploaded yet; preview_url is null until
+// media_convert has produced the JPEG.
+export interface IdCaptureImage {
+  side: 'front' | 'back';
+  label: string;
+  status: 'MISSING' | 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED';
+  preview_url: string | null;
+  converting: boolean;
+  classification: string;
+  updated: string;
+}
+
+// The latest Identity Capture visit: the ID type the recipient chose and one
+// entry per side that type needs, in order (one for a passport, front and back
+// for a license) — see dashboard_handler._id_capture_for_demo.
+export interface IdCaptureEntry {
+  id_type: string;
+  id_label: string;
+  images: IdCaptureImage[];
+}
+
+// One item logged on a Site Evidence ticket. Only a browser-displayable image
+// has a preview_url; a video or other file is listed without one.
+export interface SiteEvidenceItem {
+  n: string;
+  type: 'image' | 'video' | 'file';
+  preview_url: string | null;
+  classification: string;
+  file_name: string;
+  updated: string;
+}
+
+// The latest Site Evidence ticket and every item logged on it, in order — see
+// dashboard_handler._site_evidence_for_demo. Kept after the sender taps Done.
+export interface SiteEvidenceEntry {
+  ticket: string;
+  kind_label: string;
+  items: SiteEvidenceItem[];
+}
+
+// Keyed by vignette id (photo_submission | insurance_upload |
+// identity_capture | site_evidence) — see
 // dashboard_handler.get_latest_media_for_demo. A vignette id is absent
 // entirely if that recipient hasn't sent/uploaded a photo through it yet.
-export type LatestMedia = Partial<Record<'photo_submission' | 'insurance_upload', LatestMediaEntry>>;
+export type LatestMedia = Partial<Record<'photo_submission' | 'insurance_upload', LatestMediaEntry>> & {
+  identity_capture?: IdCaptureEntry;
+  site_evidence?: SiteEvidenceEntry;
+};
 
 // What GET /api/video/join returns: the two opaque blobs the Chime SDK needs to
 // construct a MeetingSessionConfiguration. Typed as `unknown` rather than
@@ -359,107 +408,186 @@ export class ApiError extends Error {
   }
 }
 
-async function req<T>(path: string, init?: RequestInit, authed = false): Promise<T> {
-  const base = getApiUrl();
-  if (!base) throw new Error('API URL not configured');
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (authed) {
-    const key = getApiKey();
-    if (!key) throw new Error('This action requires the API key. Set it in Settings.');
-    headers['X-Api-Key'] = key;
-  }
-  const res = await fetch(base + path, { headers, ...init });
-  if (!res.ok) throw new ApiError(res.status, await res.text());
-  return (await res.json()) as T;
+/**
+ * What one client is bound to: a connection, the registry generation current
+ * when it was created, and the values the client needs without asking the
+ * registry again. A request, response or failure whose binding is no longer
+ * current never settles (see `bound`).
+ */
+export interface Binding {
+  connectionId: string;
+  generation: number;
+  /** Captured when the client is created; already normalized (no trailing slash). */
+  baseUrl: string;
+  /** Current Brand_Label, read when a message is built. */
+  label: () => string;
+  /** True when two or more Available_Connections exist. */
+  multi: boolean;
 }
 
-export const api = {
-  // Unauthenticated: static demo metadata only.
-  getBrand: () => req<Brand>('/api/brand'),
-  getVignettes: () => req<Vignette[]>('/api/vignettes'),
-  getRcsFeatures: () => req<RcsRegistry>('/api/vignettes/features'),
-  previewVignette: (id: string) => req<VignettePreview>(`/api/vignettes/preview?id=${encodeURIComponent(id)}`),
-  // Build metadata about the deployment this console is pointed at — no account
-  // or recipient data, so it needs no key. The frontend's own version needs no
-  // call: vite.config.ts stamps it in as import.meta.env.VITE_FE_VERSION.
-  getVersion: () => req<{ backend: string }>('/api/version'),
-  // Authenticated reads — these return phone numbers, transcripts, member media
-  // or account limits. The `true` argument sends x-api-key; it must stay in step
-  // with the authorized GET route list in cdk/lib/anyhealth-stack.ts.
-  getHealth: () => req<Health>('/api/health', undefined, true),
-  getAgentIdentity: () => req<AgentIdentity>('/api/agent-identity', undefined, true),
-  getTesters: () => req<Tester[]>('/api/testers', undefined, true),
-  getTestersWithMetrics: () => req<Tester[]>('/api/testers/metrics', undefined, true),
-  // add/delete return 200 with an `error` field rather than an HTTP error, so
-  // callers must check it — `req` only throws on a non-2xx status. `reason` is
-  // 'QUOTA_EXCEEDED' when the agent's 10 verified test devices are all taken.
-  addTester: (phone: string, name: string) =>
-    req<TesterMutation>('/api/testers', { method: 'POST', body: JSON.stringify({ phone, name }) }, true),
-  deleteTester: (phone: string) =>
-    req<TesterMutation>(`/api/testers/${encodeURIComponent(phone)}`, { method: 'DELETE' }, true),
-  setTesterName: (phone: string, name: string) =>
-    req(`/api/testers/${encodeURIComponent(phone)}/name`, { method: 'PUT', body: JSON.stringify({ name }) }, true),
-  // Custom keywords registered on the RCS agent. A failed create/delete is a
-  // non-2xx answer, so these reject with an ApiError whose `userMessage` is safe
-  // to show (unlike the tester mutations above, which report failure in a 200
-  // body). createKeyword is an upsert (PutKeyword replaces an existing keyword's
-  // message/action), so it doubles as edit.
-  getKeywords: () => req<{ keywords: Keyword[]; error?: string }>('/api/keywords', undefined, true),
-  createKeyword: (keyword: string, message: string, action: KeywordAction) =>
-    req<KeywordMutation>('/api/keywords', { method: 'POST', body: JSON.stringify({ keyword, message, action }) }, true),
-  deleteKeyword: (keyword: string) =>
-    req<KeywordMutation>(`/api/keywords/${encodeURIComponent(keyword)}`, { method: 'DELETE' }, true),
-  getTesterStatus: (phone: string) =>
-    req<{ phone: string; status: string }>(`/api/testers/status?phone=${encodeURIComponent(phone)}`, undefined, true),
-  getConversations: () => req<{ conversations: ConversationSummary[] }>('/api/conversations', undefined, true),
-  getConversation: (hash: string, events = false) =>
-    req<ConversationDetail>(`/api/conversations/${hash}?include_events=${events}`, undefined, true),
-  trigger: (phone: string, trigger: string) =>
-    req('/api/trigger', { method: 'POST', body: JSON.stringify({ phone, trigger }) }, true),
-  // Sends the video-visit invitation card and returns the visit token the
-  // handset's chip will carry, so the operator console can join the *same* Chime
-  // meeting. Deliberately not `trigger('Start: Video_Visit')`: that path lets the
-  // flow mint its own token, which the dashboard never sees — both sides would
-  // then sit in separate, empty meetings.
-  startVideoVisit: (phone: string) =>
-    req<{ status: string; phone: string; visit: string }>(
-      '/api/video/start', { method: 'POST', body: JSON.stringify({ phone }) }, true),
-  // Mints a visit token without sending anything, for the "Video preview" modal —
-  // the video-visit counterpart of the device preview on every other card.
-  previewVideoVisit: () =>
-    req<{ visit: string }>('/api/video/preview', { method: 'POST', body: '{}' }, true),
-  // The URL of the member's own webview for a given token. Absolute and
-  // cross-origin (the API domain, not the dashboard's), because that page is
-  // served by the dashboard Lambda behind API Gateway — which is also why the
-  // iframe embedding it has to delegate camera and microphone explicitly.
-  videoVisitWebviewUrl: (visit: string, preview = false) =>
-    `${getApiUrl()}/webview/video-visit?visit=${encodeURIComponent(visit)}${preview ? '&preview=1' : ''}`,
-  // The visit lifecycle the modal drives. Unauthenticated on the server because
-  // the member's webview shares these routes and holds no API key; see
-  // video_visit.py. Every one carries role=clinician — the role is what makes
-  // "Leave and end visit" end it for both sides while the member's page
-  // backgrounding does not.
-  videoJoin: (visit: string) =>
-    req<VideoJoin>(`/api/video/join?visit=${encodeURIComponent(visit)}&role=clinician`),
-  videoStatus: (visit: string) =>
-    req<VideoStatus>(`/api/video/status?visit=${encodeURIComponent(visit)}`),
-  videoPing: (visit: string) =>
-    req(`/api/video/ping?visit=${encodeURIComponent(visit)}&role=clinician`),
-  videoEnd: (visit: string) =>
-    req(`/api/video/end?visit=${encodeURIComponent(visit)}&role=clinician`),
-  reply: (phone: string, message: string, agent = 'Care Advocate') =>
-    req('/api/reply', { method: 'POST', body: JSON.stringify({ phone, message, agent }) }, true),
-  setMode: (phone: string, mode: 'bot' | 'live') =>
-    req('/api/mode', { method: 'POST', body: JSON.stringify({ phone, mode }) }, true),
-  // Who is composing right now, across every registered recipient. Hashes only;
-  // the status bar maps them to names from the tester list it already holds.
-  getTyping: () =>
-    req<{ typing: TypingRecipient[]; staleAfterSeconds: number }>('/api/typing', undefined, true),
-  getMode: (phone: string) => req<{ phone: string; mode: string }>(`/api/mode?phone=${encodeURIComponent(phone)}`, undefined, true),
-  reset: () => req<{ status: string; deleted: number; deleted_media_objects: number }>('/api/reset', { method: 'POST' }, true),
-  // Unauthenticated by necessity: the return value is used directly as an
-  // <img src>, which cannot carry an x-api-key header. The server restricts
-  // which key prefixes it will presign — see dashboard_handler.get_media_url.
-  mediaUrl: (key: string) => `${getApiUrl()}/api/media?key=${encodeURIComponent(key)}`,
-  getLatestMedia: (phone: string) => req<LatestMedia>(`/api/media/latest?phone=${encodeURIComponent(phone)}`, undefined, true),
-};
+/** An authenticated call was refused before sending because the connection has no key. */
+export class MissingKeyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MissingKeyError';
+  }
+}
+
+/**
+ * Settles with `p` only while `b` is still the Active_Brand at the current
+ * generation. For a stale binding it never settles, so no `.then` / `.catch`
+ * handler downstream runs and no state or message changes. The request itself
+ * is neither cancelled nor awaited.
+ */
+function bound<T>(b: Binding, p: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    p.then(
+      (v) => { if (registry.isCurrent(b)) resolve(v); },
+      (e) => { if (registry.isCurrent(b)) reject(e); },
+    );
+  });
+}
+
+function req<T>(b: Binding, path: string, init?: RequestInit, authed = false): Promise<T> {
+  return bound(b, (async () => {
+    if (!b.baseUrl) throw new Error('API URL not configured');
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (authed) {
+      // Snapshot of the bound connection's key at issue time: a later Settings
+      // save does not change a request that is already on its way.
+      const key = registry.keyFor(b.connectionId);
+      if (!key) {
+        throw new MissingKeyError(
+          b.multi
+            ? `${b.label()}: the API key is missing. Set it in Settings.`
+            : 'This action requires the API key. Set it in Settings.',
+        );
+      }
+      headers['X-Api-Key'] = key;
+    }
+    const res = await fetch(b.baseUrl + path, { headers, ...init });
+    if (!res.ok) throw new ApiError(res.status, await res.text());
+    return (await res.json()) as T;
+  })());
+}
+
+/**
+ * The client for one binding. Every request goes to `binding.baseUrl`, and only authenticated
+ * routes carry a key (the bound connection's, in `X-Api-Key`).
+ */
+export function createApiClient(b: Binding) {
+  const r = <T = unknown>(path: string, init?: RequestInit, authed = false) => req<T>(b, path, init, authed);
+  return {
+    // Unauthenticated: static demo metadata only.
+    getBrand: () => r<Brand>('/api/brand'),
+    getVignettes: () => r<Vignette[]>('/api/vignettes'),
+    getRcsFeatures: () => r<RcsRegistry>('/api/vignettes/features'),
+    previewVignette: (id: string) => r<VignettePreview>(`/api/vignettes/preview?id=${encodeURIComponent(id)}`),
+    // Build metadata about the deployment this console is pointed at — no account
+    // or recipient data, so it needs no key. The frontend's own version needs no
+    // call: vite.config.ts stamps it in as import.meta.env.VITE_FE_VERSION.
+    getVersion: () => r<{ backend: string }>('/api/version'),
+    // Authenticated reads — these return phone numbers, transcripts, member media
+    // or account limits. The `true` argument sends x-api-key; it must stay in step
+    // with the authorized GET route list in cdk/lib/rcs-demo-stack.ts.
+    getHealth: () => r<Health>('/api/health', undefined, true),
+    getAgentIdentity: () => r<AgentIdentity>('/api/agent-identity', undefined, true),
+    getTesters: () => r<Tester[]>('/api/testers', undefined, true),
+    getTestersWithMetrics: () => r<Tester[]>('/api/testers/metrics', undefined, true),
+    // add/delete return 200 with an `error` field rather than an HTTP error, so
+    // callers must check it — `req` only throws on a non-2xx status. `reason` is
+    // 'QUOTA_EXCEEDED' when the agent's 10 verified test devices are all taken.
+    addTester: (phone: string, name: string) =>
+      r<TesterMutation>('/api/testers', { method: 'POST', body: JSON.stringify({ phone, name }) }, true),
+    deleteTester: (phone: string) =>
+      r<TesterMutation>(`/api/testers/${encodeURIComponent(phone)}`, { method: 'DELETE' }, true),
+    setTesterName: (phone: string, name: string) =>
+      r(`/api/testers/${encodeURIComponent(phone)}/name`, { method: 'PUT', body: JSON.stringify({ name }) }, true),
+    // Custom keywords registered on the RCS agent. A failed create/delete is a
+    // non-2xx answer, so these reject with an ApiError whose `userMessage` is safe
+    // to show (unlike the tester mutations above, which report failure in a 200
+    // body). createKeyword is an upsert (PutKeyword replaces an existing keyword's
+    // message/action), so it doubles as edit.
+    getKeywords: () => r<{ keywords: Keyword[]; error?: string }>('/api/keywords', undefined, true),
+    createKeyword: (keyword: string, message: string, action: KeywordAction) =>
+      r<KeywordMutation>('/api/keywords', { method: 'POST', body: JSON.stringify({ keyword, message, action }) }, true),
+    deleteKeyword: (keyword: string) =>
+      r<KeywordMutation>(`/api/keywords/${encodeURIComponent(keyword)}`, { method: 'DELETE' }, true),
+    getTesterStatus: (phone: string) =>
+      r<{ phone: string; status: string }>(`/api/testers/status?phone=${encodeURIComponent(phone)}`, undefined, true),
+    getConversations: () => r<{ conversations: ConversationSummary[] }>('/api/conversations', undefined, true),
+    getConversation: (hash: string, events = false) =>
+      r<ConversationDetail>(`/api/conversations/${hash}?include_events=${events}`, undefined, true),
+    trigger: (phone: string, trigger: string) =>
+      r('/api/trigger', { method: 'POST', body: JSON.stringify({ phone, trigger }) }, true),
+    // Sends the video-visit invitation card and returns the visit token the
+    // handset's chip will carry, so the operator console can join the *same* Chime
+    // meeting. Deliberately not `trigger('Start: Video_Visit')`: that path lets the
+    // flow mint its own token, which the dashboard never sees — both sides would
+    // then sit in separate, empty meetings.
+    startVideoVisit: (phone: string) =>
+      r<{ status: string; phone: string; visit: string }>(
+        '/api/video/start', { method: 'POST', body: JSON.stringify({ phone }) }, true),
+    // Mints a visit token without sending anything, for the "Video preview" modal —
+    // the video-visit counterpart of the device preview on every other card.
+    previewVideoVisit: () =>
+      r<{ visit: string }>('/api/video/preview', { method: 'POST', body: '{}' }, true),
+    // The URL of the member's own webview for a given token. Absolute and
+    // cross-origin (the API domain, not the dashboard's), because that page is
+    // served by the dashboard Lambda behind API Gateway — which is also why the
+    // iframe embedding it has to delegate camera and microphone explicitly.
+    videoVisitWebviewUrl: (visit: string, preview = false) =>
+      `${b.baseUrl}/webview/video-visit?visit=${encodeURIComponent(visit)}${preview ? '&preview=1' : ''}`,
+    // The visit lifecycle the modal drives. Unauthenticated on the server because
+    // the member's webview shares these routes and holds no API key; see
+    // video_visit.py. Every one carries role=clinician — the role is what makes
+    // "Leave and end visit" end it for both sides while the member's page
+    // backgrounding does not.
+    videoJoin: (visit: string) =>
+      r<VideoJoin>(`/api/video/join?visit=${encodeURIComponent(visit)}&role=clinician`),
+    videoStatus: (visit: string) =>
+      r<VideoStatus>(`/api/video/status?visit=${encodeURIComponent(visit)}`),
+    videoPing: (visit: string) =>
+      r(`/api/video/ping?visit=${encodeURIComponent(visit)}&role=clinician`),
+    videoEnd: (visit: string) =>
+      r(`/api/video/end?visit=${encodeURIComponent(visit)}&role=clinician`),
+    // `agent` is omitted from the body when empty so the backend labels the
+    // reply with the brand's own live-agent role.
+    reply: (phone: string, message: string, agent = '') =>
+      r('/api/reply', { method: 'POST', body: JSON.stringify(agent ? { phone, message, agent } : { phone, message }) }, true),
+    setMode: (phone: string, mode: 'bot' | 'live') =>
+      r('/api/mode', { method: 'POST', body: JSON.stringify({ phone, mode }) }, true),
+    // Who is composing right now, across every registered recipient. Hashes only;
+    // the status bar maps them to names from the tester list it already holds.
+    getTyping: () =>
+      r<{ typing: TypingRecipient[]; staleAfterSeconds: number }>('/api/typing', undefined, true),
+    getMode: (phone: string) => r<{ phone: string; mode: string }>(`/api/mode?phone=${encodeURIComponent(phone)}`, undefined, true),
+    reset: () => r<{ status: string; deleted: number; deleted_media_objects: number }>('/api/reset', { method: 'POST' }, true),
+    // Unauthenticated by necessity: the return value is used directly as an
+    // <img src>, which cannot carry an x-api-key header. The server restricts
+    // which key prefixes it will presign — see dashboard_handler.get_media_url.
+    mediaUrl: (key: string) => `${b.baseUrl}/api/media?key=${encodeURIComponent(key)}`,
+    getLatestMedia: (phone: string) => r<LatestMedia>(`/api/media/latest?phone=${encodeURIComponent(phone)}`, undefined, true),
+  };
+}
+
+export type ApiClient = ReturnType<typeof createApiClient>;
+
+/**
+ * Labelling request for the Brand_Picker (`GET /api/brand`): unbound, sends no
+ * key, never retried. Rejects on a network error, an error response, or no
+ * answer within `timeoutMs`. The caller applies the result to a label cache.
+ */
+export async function probeBrand(conn: BrandConnection, timeoutMs = 10_000): Promise<Brand> {
+  const base = normalizeUrl(conn.apiUrl);
+  if (!base) throw new Error('API URL not configured');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${base}/api/brand`, { signal: ctrl.signal });
+    if (!res.ok) throw new ApiError(res.status, await res.text());
+    return (await res.json()) as Brand;
+  } finally {
+    clearTimeout(timer);
+  }
+}

@@ -15,7 +15,7 @@
  * Used two ways, because the two build systems can't share an import:
  *   - imported by web/vite.config.ts, which injects the frontend string into
  *     the bundle at build time (`__FE_VERSION__`);
- *   - run as a CLI by cdk/lib/anyhealth-stack.ts
+ *   - run as a CLI by cdk/lib/rcs-demo-stack.ts
  *     (`node scripts/version.mjs backend`), because cdk/tsconfig.json is
  *     CommonJS and cannot cleanly import an .mjs.
  *

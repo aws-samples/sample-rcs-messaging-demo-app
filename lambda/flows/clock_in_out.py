@@ -76,10 +76,17 @@ def _status_card(phone_hash):
     }]
 
 
+# Demo values. The Shift Summary page (webviews/shift-summary.html) shows the
+# same static clock-in time and duration, so the chat and the page agree. They
+# name no place, person or date; the location always comes from the content.
+_DEMO_CLOCK_IN_TIME = "9:02 AM"
+_DEMO_SHIFT_DURATION = "7h 58m"
+
+
 def _display_time(iso_ts):
     # Demo-friendly: show a fixed, readable time rather than parsing/formatting
     # the ISO timestamp with timezone math for a sample employee.
-    return "9:02 AM" if iso_ts else "just now"
+    return _DEMO_CLOCK_IN_TIME if iso_ts else "just now"
 
 
 def _clocked_out(phone_hash):
@@ -87,7 +94,7 @@ def _clocked_out(phone_hash):
     first_name = name.split(" ")[0] if name else name
     status = c.get_shift_status(phone_hash)
     c.clock_out(phone_hash)
-    duration = "7h 58m" if status else "the shift"
+    duration = _DEMO_SHIFT_DURATION if status else "the shift"
     return [{
         "Content": {
             "RichCard": {

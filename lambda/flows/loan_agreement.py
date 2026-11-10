@@ -1,8 +1,7 @@
 """Loan Agreement -- signable-document webview, deterministic flow.
 
-A finance counterpart to the Secure Document Upload vignette: instead of the
-member sending a document IN, the business sends a document OUT to be read and
-signed. The agreement is a self-contained HTML page
+A financial-services vignette: the business sends a document OUT to the customer
+to be read and signed. The agreement is a self-contained HTML page
 (lambda/webviews/loan-agreement.html) opened in an in-app WEBVIEW -- a fake
 3-page installment-loan agreement with per-page initials and a drawn signature.
 On submit it shows a signing receipt (timestamp, reference id, masked token,
@@ -10,7 +9,7 @@ SHA-256 document fingerprint). Nothing is sent or stored; the page makes no
 network calls of its own.
 
 Why a webview rather than a FileMessage: a signable document is interactive
-(you initial and sign it), and -- like the insurance upload -- keeping it in a
+(you initial and sign it), and keeping it in a
 webview means the document and the signature never transit the RCS/carrier
 network. The RCS channel carries only the link. That is the right transport for
 anything containing personal or financial detail. As with the other webviews in

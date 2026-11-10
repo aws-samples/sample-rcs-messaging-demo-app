@@ -1,5 +1,9 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+// Dev-server-only endpoint that lists the brand connections this machine holds
+// (the wired store plus legacy web/.env.<brand> files) for the brand picker.
+import { brandConnections } from './dev-server/brand-connections.mjs';
 // The frontend half of the version string in the dashboard status bar. Computed
 // at build (and dev-server start) time from version.json plus the commit count
 // for web/ — see scripts/version.mjs, which the CDK app calls as a CLI for the
@@ -16,8 +20,23 @@ import { version } from '../scripts/version.mjs';
 process.env.VITE_FE_VERSION = process.env.VITE_FE_VERSION || version('frontend');
 
 export default defineConfig({
-  plugins: [react()],
-  server: { port: 5173 },
+  plugins: [
+    react(),
+    brandConnections({
+      storePath: fileURLToPath(new URL('../.deploy/dashboard-brands.json', import.meta.url)),
+      envDir: fileURLToPath(new URL('.', import.meta.url)),
+    }),
+  ],
+  server: {
+    port: 5173,
+    // Explicit loopback bind: the private default. Passing --host on the command
+    // line still overrides it, which the project docs tell users not to do.
+    host: 'localhost',
+    // Vite's default CORS lets any localhost origin read dev-server responses,
+    // including modules that inline VITE_API_KEY from web/.env. Off, so another
+    // local page cannot read them cross-origin.
+    cors: false,
+  },
   // amazon-chime-sdk-js is distributed as CommonJS, and parts of it (and its
   // transitive deps) reference Node's `global`. Vite does not shim `global`, so
   // without an alias, loading the SDK throws "ReferenceError: global is not

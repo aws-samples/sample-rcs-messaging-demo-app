@@ -23,10 +23,7 @@ def _schedule_card(phone_hash):
     if not rows:
         body = "You have no upcoming shifts scheduled."
     else:
-        lines = [
-            f"{s['day']}, {s['date']} — {s['start']}\u2013{s['end']} ({s.get('role', '')})"
-            for s in rows
-        ]
+        lines = [_shift_line(s) for s in rows]
         body = "Upcoming shifts:\n" + "\n".join(lines)
     name = c.tester_name(phone_hash, fallback=c.employee_name())
     return [{
@@ -62,6 +59,15 @@ def _schedule_card(phone_hash):
             f"Full schedule: {c.webview_url('schedule')}"
         ),
     }]
+
+
+def _shift_line(s):
+    """One shift as text. Day, date and isToday are computed by c.shifts() from
+    the shift's dayOffset, so nothing here is a fixed date."""
+    when = "Today" if s.get("isToday") else s.get("day", "")
+    when = f"{when}, {s['date']}" if s.get("date") else when
+    role = f" ({s['role']})" if s.get("role") else ""
+    return f"{when} \u2014 {s.get('start', '')}\u2013{s.get('end', '')}{role}"
 
 
 def on_postback(phone, phone_hash, postback_data):

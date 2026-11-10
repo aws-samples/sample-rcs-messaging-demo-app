@@ -1,10 +1,17 @@
-# Keeps this sample's RCS feature registry and the code that reads it in step.
+# Checks that run on every push and pull request. None of them needs AWS
+# credentials or deploys anything.
 #
-# One job, offline. Runs on every push and pull request and checks
-# content/rcs-features.json against the code that consumes it: every documented
-# limit and feature is wired to the code that reads it, nothing hardcodes a
-# limit, and no `surfaces` claim has gone stale. No network access and no AWS
-# credentials, so it never depends on a third-party site being up.
+#   registry  content/rcs-features.json against the code that consumes it: every
+#             documented limit and feature is wired to the code that reads it,
+#             nothing hardcodes a limit, and no `surfaces` claim has gone stale.
+#             Offline.
+#   scripts   the offline tests for scripts/deploy.mjs and the agent scripts (all
+#             AWS calls are faked), and a typecheck of the CDK app.
+#   web       a typecheck of the local dashboard.
+#   brands    lists the brand ids from content/brand.md for the synth matrix.
+#   synth     `cdk synth` for each brand in the catalog, with a placeholder agent
+#             id and the agent check off, so a brand that cannot synthesize is
+#             caught before anyone deploys it. Needs the network for npm and pip.
 #
 # Keeping the AWS doc links and limit values current is a human task, described
 # in docs/updating-rcs-content.md — not something this workflow automates.
@@ -26,7 +33,96 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          # The Lambdas' Python minor version (PY_TAG in cdk/lib/anyhealth-stack.ts).
+          # The Lambdas' Python minor version (PY_TAG in cdk/lib/rcs-demo-stack.ts).
           python-version: '3.14'
       - name: Check the RCS feature registry
         run: python3 scripts/check-rcs-registry.py
+
+  scripts:
+    name: Script tests and CDK typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: cdk/package-lock.json
+      - name: Install the CDK dependencies
+        run: npm ci
+        working-directory: cdk
+      - name: Test the deploy and agent scripts (offline, AWS faked)
+        run: node --test 'scripts/test/*.test.mjs'
+      - name: Typecheck the CDK app
+        run: npx tsc --noEmit -p .
+        working-directory: cdk
+
+  web:
+    name: Dashboard typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install the dashboard dependencies
+        run: npm ci
+        working-directory: web
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: web
+
+  brands:
+    name: List the brands in the catalog
+    runs-on: ubuntu-latest
+    outputs:
+      ids: ${{ steps.ids.outputs.ids }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ids
+        # The `brands:` keys in content/brand.md's frontmatter, so a brand added
+        # there is synthesized here with no workflow change.
+        run: |
+          ids=$(python3 - <<'EOF'
+          import json, re
+          fm = open('content/brand.md').read().split('\n---', 1)[0]
+          block = re.search(r'^brands:\n((?:[ #].*\n|\n)*)', fm, re.M).group(1)
+          print(json.dumps(re.findall(r'^  ([a-z][a-z0-9-]*):', block, re.M)))
+          EOF
+          )
+          echo "Brands: $ids"
+          echo "ids=$ids" >> "$GITHUB_OUTPUT"
+
+  synth:
+    name: cdk synth (${{ matrix.brand }})
+    needs: brands
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        brand: ${{ fromJSON(needs.brands.outputs.ids) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: cdk/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install the CDK dependencies
+        run: npm ci
+        working-directory: cdk
+      - name: Synthesize
+        working-directory: cdk
+        # A placeholder agent id in the real form; skipAgentCheck stops synth
+        # from looking it up in AWS (there are no credentials here).
+        run: >-
+          npx cdk synth --quiet
+          -c "brand=${{ matrix.brand }}"
+          -c rcsAgentId=rcs-00000000000000000000000000000000
+          -c region=us-east-1
+          -c skipAgentCheck=true

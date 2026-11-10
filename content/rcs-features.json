@@ -247,7 +247,7 @@
       "limitRefs": ["fallbackBodyChars"],
       "doc": "rcs-fallback-per-message.html",
       "status": "demonstrated",
-      "statusNote": "Wired on the entry message of 13 of the 20 use case examples — one hand-written SMS body each, since a card's chips, images and map pins have no plain-text equivalent — but inactive unless you deploy with -c smsFallbackNumber=+1…, because a fallback needs an SMS-capable origination identity this stack cannot provision for you. While it is inactive no FallbackConfiguration is attached at all, so RCS_FALLEN_BACK_TO_SMS never fires and the Recipients tab's Fell back to SMS column stays at zero; Settings reports which state you are in."
+      "statusNote": "Wired on the entry message of 29 of the 41 use case examples — one hand-written SMS body each, since a card's chips, images and map pins have no plain-text equivalent — but inactive unless you deploy with -c smsFallbackNumber=+1…, because a fallback needs an SMS-capable origination identity this stack cannot provision for you. While it is inactive no FallbackConfiguration is attached at all, so RCS_FALLEN_BACK_TO_SMS never fires and the Recipients tab's Fell back to SMS column stays at zero; Settings reports which state you are in."
     },
     {
       "key": "pool_fallback",
@@ -270,7 +270,7 @@
         {"where": "Recipients tab — Delivered column",
          "file": "web/src/views/Recipients.tsx", "evidence": "label=\"Delivered\""}
       ],
-      "statusNote": "On a testing agent, delivery and read events appear once the agent is launched in a country, so the Delivered and Read columns stay at zero until then."
+      "statusNote": "Arrives within seconds on a testing agent too, once the event topic's KMS key lets sms-voice.amazonaws.com publish (the AWS managed SNS key cannot)."
     },
     {
       "key": "read_receipts",
@@ -283,7 +283,7 @@
         {"where": "Recipients tab — Read column",
          "file": "web/src/views/Recipients.tsx", "evidence": "label=\"Read\""}
       ],
-      "statusNote": "Same as delivery receipts: on a testing agent, read events appear once the agent is launched in a country."
+      "statusNote": "Sent when the recipient opens the message; not every client reports read status (on iOS it is a per-recipient setting, off by default)."
     },
     {
       "key": "two_way",
@@ -350,7 +350,7 @@
       "key": "event_destinations",
       "name": "Event destinations",
       "kind": "rcs-api",
-      "blurb": "Outbound status events route through a configuration set to SNS, Amazon Data Firehose, or CloudWatch Logs. RCS_ALL subscribes to every RCS event type with one matching type.",
+      "blurb": "Outbound status events route through a configuration set to SNS, Amazon Data Firehose, or CloudWatch Logs. RCS_ALL subscribes to every RCS event type with one matching type; this demo adds TEXT_ALL and MEDIA_ALL for the SMS or MMS a fallback sends.",
       "doc": "rcs-events.html#rcs-events-routing",
       "status": "demonstrated",
       "surfaces": [
@@ -392,6 +392,14 @@
       "name": "Event-driven send",
       "kind": "demo-pattern",
       "blurb": "The business initiates: the dashboard (standing in for your backend) pushes a message to a member who wasn't expecting it, rather than replying to something they sent.",
+      "status": "demonstrated"
+    },
+    {
+      "key": "geofence_trigger",
+      "name": "Geofence-triggered send",
+      "kind": "demo-pattern",
+      "blurb": "A location event in your own system becomes a message: a truck crosses a geofence and the site is told before it arrives. The demo's Send button stands in for that system.",
+      "gotcha": "RCS has no geofencing and no continuous location. Your system detects the fence (telematics, a driver app) and calls the send; RCS only carries the message. A RequestLocation chip returns coordinates once, when the person taps it.",
       "status": "demonstrated"
     },
     {

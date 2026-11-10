@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { parseBrandSelection, slugify } from './brand-selection';
 
 /** Absolute path to the project root (the anyhealth/ folder). */
 export const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -13,7 +14,7 @@ export const LAMBDA_DIR = path.join(PROJECT_ROOT, 'lambda');
  * `secure-docs/` prefix, which neither the channel adapter's role nor the bucket
  * policy for the EUM service principal lets the service read, so an object here
  * is not meant to be sendable as an RCS `FileMessage`. A send naming one was
- * refused with RESOURCE_NOT_ACCESSIBLE in testing — see anyhealth-stack.ts.
+ * refused with RESOURCE_NOT_ACCESSIBLE in testing — see rcs-demo-stack.ts.
  */
 export const SECURE_DOCS_DIR = path.join(PROJECT_ROOT, 'secure-docs');
 
@@ -28,7 +29,14 @@ export interface DeployInputs {
   /** Bedrock model id + region (Converse API). */
   bedrockModelId: string;
   bedrockRegion: string;
-  /** Slug derived from the brand name — used to name resources. */
+  /**
+   * The selected brand id (a key in the `brands` catalog of content/brand.md).
+   * Resolved from `-c brand=<id>`, defaulting to the catalog's `defaultBrand`
+   * when unset. Injected into the Lambdas as the `BRAND` env var so the
+   * runtime accessors read the selected brand's identity block.
+   */
+  brandId: string;
+  /** Slug derived from the selected brand's name — used to name resources. */
   prefix: string;
   brandName: string;
   /**
@@ -68,14 +76,6 @@ export function readFrontmatter(mdPath: string): Record<string, any> {
   const m = raw.match(/^---\n([\s\S]*?)\n---/);
   if (!m) return {};
   return YAML.parse(m[1]) ?? {};
-}
-
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 20) || 'anyhealth';
 }
 
 /**
@@ -186,55 +186,25 @@ export function stageContentForLambda(): void {
 export function loadDeployInputs(app: {
   node: { tryGetContext(key: string): any };
 }): DeployInputs {
-  const agentFile = path.join(PROJECT_ROOT, '.deploy', 'agent.json');
-  let fromFile: { rcsAgentId?: string; region?: string } = {};
-  if (fs.existsSync(agentFile)) {
-    try {
-      fromFile = JSON.parse(fs.readFileSync(agentFile, 'utf8'));
-    } catch {
-      /* ignore malformed file; fall back to context/env */
-    }
-  }
+  // The brand is resolved FIRST: every brand has its own RCS agent (a
+  // registration fixes the name, logo and colours the phone shows), so the agent
+  // is looked up for the selected brand rather than taken from a single slot.
+  // parseBrandSelection throws (naming the id and listing the valid ids) on an
+  // unknown or multi-valued selection, so a bad `-c brand=` stops here, before
+  // any resource is built or any AWS lookup runs.
+  const { brandId, brand, brandName, defaultBrand } = resolveSelectedBrand(app);
 
-  const rcsAgentId = app.node.tryGetContext('rcsAgentId') || fromFile.rcsAgentId;
+  const { rcsAgentId, region, source } = resolveAgentForBrand(app, brandId, defaultBrand);
 
-  if (!rcsAgentId) {
-    throw new Error(
-      'No RCS agent id found. Run the RCS agent setup (SETUP.md step 2, or AGENTS.md ' +
-        'if an AI coding assistant runs it) to create .deploy/agent.json, or pass ' +
-        '-c rcsAgentId=rcs-XXXX.'
-    );
-  }
+  // Name what this synth is about to wire, on stderr (stdout carries the
+  // template for `cdk synth`). A deploy pointed at the wrong agent is the one
+  // mistake that succeeds silently, so make it visible.
+  console.error(`[rcs-demo] brand=${brandId} agent=${rcsAgentId} region=${region} (agent from ${source})`);
 
-  // The region MUST be stated explicitly, because it has to equal the region the
-  // RCS agent lives in — an RCS agent is a regional resource, and every IAM ARN
-  // this stack builds comes from the *stack's* region. Inheriting the region from
-  // ambient config (AWS_REGION / AWS_PROFILE / CDK_DEFAULT_REGION) is never
-  // right: it produces a stack that deploys perfectly and then fails on every
-  // SendRcsMessage. So we fail here instead of guessing.
-  const region = app.node.tryGetContext('region') || fromFile.region;
-  if (!region) {
-    const ambient = process.env.CDK_DEFAULT_REGION || '(none resolved)';
-    throw new Error(
-      'No region specified. This stack must deploy to the SAME region as your RCS ' +
-        'agent, so it will not silently inherit one from your CLI configuration ' +
-        `(which currently resolves to ${ambient}).\n` +
-        '\n  1. Find the region your agent is actually in — check each region you may ' +
-        'have used:\n' +
-        '       aws pinpoint-sms-voice-v2 describe-rcs-agents --region <REGION> \\\n' +
-        '         --query "RcsAgents[].RcsAgentId"\n' +
-        '\n  2. Then state it, either in .deploy/agent.json:\n' +
-        `       { "rcsAgentId": "${rcsAgentId}", "region": "<the region from step 1>" }\n` +
-        '     or at deploy time:\n' +
-        `       npx cdk deploy -c rcsAgentId=${rcsAgentId} -c region=<the region from step 1>\n` +
-        `\n  Only use ${ambient} if that is genuinely where the agent lives — deploying to ` +
-        'the wrong region succeeds and then fails on every send, which is why this is not ' +
-        'guessed for you.'
-    );
-  }
-
-  const brand = readFrontmatter(path.join(CONTENT_DIR, 'brand.md'));
-  const brandName: string = brand.brandName || 'AnyHealth';
+  // Refuse an agent registered as a different brand. Best effort: a check that
+  // cannot run warns and carries on, so `cdk destroy` still works after the
+  // agent itself is gone.
+  checkAgentMatchesBrand(app, rcsAgentId, region, brandId, brandName);
 
   // Checked before the optional AWS lookups below, so a bad value or a brand.md
   // that cannot produce the replies fails without touching the network.
@@ -286,11 +256,238 @@ export function loadDeployInputs(app: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     bedrockModelId,
     bedrockRegion,
+    brandId,
     prefix: slugify(brandName),
     brandName,
     smsFallbackNumber,
     keywordMessages,
   };
+}
+
+/**
+ * Resolve the single selected brand from content/brand.md and `-c brand=<id>`.
+ *
+ * Reads the `brands` catalog map and `defaultBrand` from the frontmatter, parses
+ * the `-c brand=` context value through the pure `parseBrandSelection` helper
+ * (empty/unset → `defaultBrand`; an unknown or multi-valued id throws, naming it
+ * and listing the valid ids), and returns the resolved id together with that
+ * brand's identity block and its `brandName`.
+ *
+ * A legacy brand.md with no `brands` map is treated as a one-entry catalog under
+ * `defaultBrand` whose block is the flat frontmatter, so an un-migrated file
+ * still deploys as the default brand alone (R11.3). This runs before any
+ * resource is built or any AWS lookup is made.
+ */
+function resolveSelectedBrand(app: { node: { tryGetContext(key: string): any } }): {
+  brandId: string;
+  brand: Record<string, any>;
+  brandName: string;
+  defaultBrand: string;
+} {
+  const frontmatter = readFrontmatter(path.join(CONTENT_DIR, 'brand.md'));
+  const defaultBrand: string =
+    typeof frontmatter.defaultBrand === 'string' && frontmatter.defaultBrand.trim()
+      ? frontmatter.defaultBrand.trim()
+      : 'anyhealth';
+
+  // Build the catalog. When `brands` is absent (legacy single-brand file),
+  // synthesize a one-entry catalog under defaultBrand from the flat frontmatter.
+  const hasCatalog =
+    frontmatter.brands && typeof frontmatter.brands === 'object' && !Array.isArray(frontmatter.brands);
+  const catalog: Record<string, Record<string, any>> = hasCatalog
+    ? (frontmatter.brands as Record<string, Record<string, any>>)
+    : { [defaultBrand]: frontmatter };
+
+  const brandId = parseBrandSelection(
+    app.node.tryGetContext('brand'),
+    Object.keys(catalog),
+    defaultBrand,
+  );
+
+  const brand = catalog[brandId] ?? {};
+  const brandName: string = brand.brandName || 'AnyHealth';
+  return { brandId, brand, brandName, defaultBrand };
+}
+
+const AGENT_ID_RE = /^rcs-[0-9a-f]{32}$/;
+// One character class and no nested quantifier, so the match is linear; the
+// caller also rejects `--`, the empty segment the class would otherwise allow.
+// Keep in step with isValidRegion in scripts/lib/brand-catalog.mjs.
+const REGION_RE = /^[a-z]{2}-[a-z-]+-\d+$/;
+
+/** Where the agent for a deploy came from, for the synth log line. */
+type AgentSource = '-c rcsAgentId' | `.deploy/agent.json agents.${string}` | '.deploy/agent.json (single-agent format)';
+
+/**
+ * The RCS agent and Region for the selected brand.
+ *
+ * Precedence, per key:
+ *  1. `-c rcsAgentId=` / `-c region=` on the command line.
+ *  2. `.deploy/agent.json` → `agents.<brandId>`, written by scripts/record-agent.mjs.
+ *     This is the normal path: one entry per brand, so
+ *     `cdk deploy -c brand=<id>` needs nothing else.
+ *  3. The older single-agent format, `{ "rcsAgentId", "region" }` with no
+ *     `agents` map. It names no brand, so it is used ONLY for the catalog's
+ *     default brand, or for the brand its optional `brand` key names. Using it
+ *     for any other brand would wire that brand's stack to another brand's agent:
+ *     the deploy repoints the agent's two-way messaging, and the phone shows the
+ *     wrong verified sender. That deploy succeeds, so it is refused here.
+ *
+ * A malformed agent.json is an error, not a silent fallback.
+ */
+function resolveAgentForBrand(
+  app: { node: { tryGetContext(key: string): any } },
+  brandId: string,
+  defaultBrand: string,
+): { rcsAgentId: string; region: string; source: AgentSource } {
+  const agentFile = path.join(PROJECT_ROOT, '.deploy', 'agent.json');
+  let file: Record<string, any> = {};
+  if (fs.existsSync(agentFile)) {
+    try {
+      file = JSON.parse(fs.readFileSync(agentFile, 'utf8')) ?? {};
+    } catch {
+      throw new Error(
+        '.deploy/agent.json is not valid JSON. Fix or delete it, then record each brand\'s agent with:\n' +
+          '    node scripts/record-agent.mjs <brand> <AGENT_ID> <REGION>',
+      );
+    }
+  }
+  const map: Record<string, any> =
+    file.agents && typeof file.agents === 'object' && !Array.isArray(file.agents) ? file.agents : {};
+  const entry: Record<string, any> | undefined =
+    map[brandId] && typeof map[brandId] === 'object' ? map[brandId] : undefined;
+
+  // The single-agent format applies to one brand only (see above).
+  const legacyBrand = typeof file.brand === 'string' && file.brand.trim() ? file.brand.trim() : defaultBrand;
+  const legacy = typeof file.rcsAgentId === 'string' && legacyBrand === brandId ? file : undefined;
+
+  const ctxAgent = app.node.tryGetContext('rcsAgentId');
+  const ctxRegion = app.node.tryGetContext('region');
+  const rcsAgentId: string | undefined = ctxAgent || entry?.rcsAgentId || legacy?.rcsAgentId;
+  const region: string | undefined = ctxRegion || entry?.region || legacy?.region;
+  const source: AgentSource = ctxAgent
+    ? '-c rcsAgentId'
+    : entry?.rcsAgentId
+      ? `.deploy/agent.json agents.${brandId}`
+      : '.deploy/agent.json (single-agent format)';
+
+  if (!rcsAgentId) {
+    const recorded = Object.keys(map);
+    const legacyNote =
+      typeof file.rcsAgentId === 'string' && legacyBrand !== brandId
+        ? `\n  .deploy/agent.json holds one agent in the single-agent format, which this stack uses ` +
+          `only for "${legacyBrand}". It is not used for "${brandId}", because wiring one brand's ` +
+          `stack to another brand's agent succeeds and then shows the wrong sender on the phone.`
+        : '';
+    throw new Error(
+      `No RCS agent recorded for brand "${brandId}".` +
+        (recorded.length ? ` Agents are recorded for: ${recorded.join(', ')}.` : '') +
+        legacyNote +
+        `\n\n  Each brand needs its own RCS agent. Create one for "${brandId}" (SETUP.md step 2, or ` +
+        `AGENTS.md if an AI coding assistant runs it), then record it:\n` +
+        `    node scripts/record-agent.mjs ${brandId} <AGENT_ID> <REGION>\n` +
+        `  or pass it for one command: -c rcsAgentId=<AGENT_ID> -c region=<REGION>`,
+    );
+  }
+  if (!AGENT_ID_RE.test(rcsAgentId)) {
+    throw new Error(`The RCS agent id for "${brandId}" is "${rcsAgentId}", which is not of the form rcs-<32 hex>.`);
+  }
+
+  // The region MUST be stated explicitly, because it has to equal the region the
+  // RCS agent lives in — an RCS agent is a regional resource, and every IAM ARN
+  // this stack builds comes from the *stack's* region. Inheriting the region from
+  // ambient config (AWS_REGION / AWS_PROFILE / CDK_DEFAULT_REGION) is never
+  // right: it produces a stack that deploys perfectly and then fails on every
+  // SendRcsMessage. So we fail here instead of guessing.
+  if (!region) {
+    const ambient = process.env.CDK_DEFAULT_REGION || '(none resolved)';
+    throw new Error(
+      'No region specified. This stack must deploy to the SAME region as your RCS ' +
+        'agent, so it will not silently inherit one from your CLI configuration ' +
+        `(which currently resolves to ${ambient}).\n` +
+        '\n  1. Find the region your agent is actually in — check each region you may ' +
+        'have used:\n' +
+        '       aws pinpoint-sms-voice-v2 describe-rcs-agents --region <REGION> \\\n' +
+        '         --query "RcsAgents[].RcsAgentId"\n' +
+        '\n  2. Then record it:\n' +
+        `       node scripts/record-agent.mjs ${brandId} ${rcsAgentId} <the region from step 1>\n` +
+        '     or pass it at deploy time:\n' +
+        `       npx cdk deploy -c brand=${brandId} -c rcsAgentId=${rcsAgentId} -c region=<the region from step 1>\n` +
+        `\n  Only use ${ambient} if that is genuinely where the agent lives — deploying to ` +
+        'the wrong region succeeds and then fails on every send, which is why this is not ' +
+        'guessed for you.'
+    );
+  }
+  if (!REGION_RE.test(region) || region.includes('--')) {
+    throw new Error(`The region for "${brandId}" is "${region}", which is not an AWS Region name such as us-east-1.`);
+  }
+  return { rcsAgentId, region, source };
+}
+
+/**
+ * Refuse to deploy a brand onto an agent registered as a different brand.
+ *
+ * Reads the agent's testing registration and compares its `brandName` with the
+ * selected brand's. A mismatch throws: that deploy would succeed, repoint the
+ * other brand's two-way messaging at this stack, and send this brand's content
+ * under the other brand's verified identity.
+ *
+ * Best effort in every other case, the same principle as
+ * checkFallbackNumberIsUsable: no CLI, no credentials, a missing permission, an
+ * agent that no longer exists (a teardown that deleted it first) or one with no
+ * testing registration all warn and continue. `-c skipAgentCheck=true` skips the
+ * check, for an agent deliberately registered under another name.
+ */
+function checkAgentMatchesBrand(
+  app: { node: { tryGetContext(key: string): any } },
+  rcsAgentId: string,
+  region: string,
+  brandId: string,
+  brandName: string,
+): void {
+  if (String(app.node.tryGetContext('skipAgentCheck') ?? '').toLowerCase() === 'true') {
+    console.error(`[rcs-demo] skipAgentCheck=true: not checking that ${rcsAgentId} is registered as ${brandName}`);
+    return;
+  }
+  const aws = (args: string[]): string =>
+    execFileSync('aws', ['pinpoint-sms-voice-v2', ...args, '--region', region, '--output', 'text', '--no-cli-pager'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    }).trim();
+  let registered: string;
+  try {
+    const registrationId = aws([
+      'describe-rcs-agents', '--rcs-agent-ids', rcsAgentId,
+      '--query', 'RcsAgents[0].TestingAgent.RegistrationId',
+    ]);
+    if (!registrationId || registrationId === 'None') {
+      console.warn(`\n[warning] ${rcsAgentId} has no testing registration yet, so its brand cannot be checked.\n`);
+      return;
+    }
+    registered = aws([
+      'describe-registration-field-values', '--registration-id', registrationId,
+      '--field-paths', 'agentDetails.brandName',
+      '--query', 'RegistrationFieldValues[0].TextValue',
+    ]);
+  } catch (e: any) {
+    const detail = String(e?.stderr || e?.message || e).match(/An error occurred \(([A-Za-z]+)\)/)?.[1] ?? 'the AWS CLI call failed';
+    console.warn(
+      `\n[warning] Could not check which brand RCS agent ${rcsAgentId} is registered as (${detail}). ` +
+        `Continuing. Before you deploy, make sure it is the agent you created for ${brandName}: ` +
+        `deploying a brand onto another brand's agent repoints that agent's two-way messaging.\n`,
+    );
+    return;
+  }
+  if (registered && registered !== 'None' && registered !== brandName) {
+    throw new Error(
+      `RCS agent ${rcsAgentId} is registered as "${registered}", not "${brandName}" (brand "${brandId}").\n` +
+        `  Deploying would repoint that agent's two-way messaging at the ${brandId} stack and send ` +
+        `${brandName} messages under the "${registered}" sender.\n` +
+        `  Use the agent you created for ${brandName}: node scripts/record-agent.mjs ${brandId} <AGENT_ID> ${region}\n` +
+        `  If this agent really is meant for ${brandName}, pass -c skipAgentCheck=true.`,
+    );
+  }
 }
 
 interface PhoneNumberSummary {

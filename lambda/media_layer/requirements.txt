@@ -9,12 +9,18 @@
 # cold starts shouldn't have to carry.
 #
 # NOTE: pillow-heif's wheels only publish a manylinux_2_28 platform tag (not
-# manylinux2014, unlike DepsLayer's boto3/PyYAML) — see anyhealth-stack.ts's
+# manylinux2014, unlike DepsLayer's boto3/PyYAML) — see rcs-demo-stack.ts's
 # MediaLayer bundling command. Lambda's Python 3.14 runtime (Amazon Linux
 # 2023, glibc 2.34) comfortably satisfies that floor.
 #
 # Pinned to exact, tested versions for reproducible builds. Pillow decodes
 # untrusted files (webview uploads, inbound RCS media), so check these pins
 # with `pip-audit --no-deps -r lambda/media_layer/requirements.txt`.
+#
+# LICENSES: the pillow-heif wrapper is BSD-3-Clause, but its prebuilt wheels
+# bundle libheif and libde265 (LGPLv3) and x265 (GPLv2), and the wheel states
+# that the binary wheels are GPLv2 as a result. Pillow's wheels bundle shared
+# libraries under their own licenses too. Review these before you share the
+# built layer or a deployed Lambda package with anyone else. See NOTICE.
 Pillow==12.3.0
 pillow-heif==1.8.0

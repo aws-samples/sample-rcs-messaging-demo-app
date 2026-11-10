@@ -54,7 +54,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <meta name="color-scheme" content="light">
-<title>Loan Agreement – Signature Required</title>
+<title>{{BRAND_NAME}} – Loan Agreement – Signature Required</title>
 <!-- Optional script font for stamped initials; falls back to system cursive if blocked -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -242,7 +242,7 @@
 <!-- ===================== SIGNING APP ===================== -->
 <div id="app" hidden>
   <header class="topbar">
-    <div class="brand"><span id="lenderName"></span><small>Secure document delivery</small></div>
+    <div class="brand"><span id="lenderName">{{BRAND_NAME}}</span><small>Secure document delivery</small></div>
     <span class="badge" id="verifiedBadge">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
       <span id="badgeText">Verified recipient</span>
@@ -366,8 +366,11 @@
 
   /* ======================= CONFIG ======================= */
   const CONFIG = {
-    LENDER_NAME: "Harborline Lending Co.",   // fictional
-    DOC_ID: "HL-LA-2026-0925",
+    // The lender name is the brand name, rendered into the #lenderName element
+    // by the server (HTML-escaped). It is read from the DOM, never from a script
+    // literal, so a quote in a brand name cannot break out of a string.
+    // The document id carries today's date (no fixed date in the template).
+    DOC_ID: "LA-" + new Date().toISOString().slice(0, 10).replace(/-/g, ""),
     DOC_VERSION: "v1.0",
     INITIAL_MODE: "draw",                    // "draw" | "stamp" | "type"  (URL ?initials= overrides)
     REQUIRE_TOKEN: true,                     // set false to demo without a token
@@ -721,7 +724,6 @@
     }
 
     // 2) Static text
-    $("#lenderName").textContent = CONFIG.LENDER_NAME;
     $("#badgeText").textContent = token ? `Verified recipient · ${maskToken(token)}` : "Demo mode";
     $$(".doc-id").forEach(e => e.textContent = CONFIG.DOC_ID);
     $$(".signer-name").forEach(e => e.textContent = signerName);

@@ -20,7 +20,7 @@ deploy:
   [Why the dashboard is local-only](#why-the-dashboard-is-local-only).
 - Do not point the sample at real member or customer data, and do not register phone
   numbers that belong to people who have not agreed to receive test messages.
-- Run `(cd cdk && npx cdk destroy)` when you are finished. Leaving the stack up leaves an
+- Run `(cd cdk && npx cdk destroy -c brand=<id>)` for each brand you deployed when you are finished. Leaving a stack up leaves an
   internet-reachable API and accrues cost.
 
 The sample also makes deliberate trade-offs that you must understand before you deploy it:
@@ -68,7 +68,7 @@ The sample also makes deliberate trade-offs that you must understand before you 
   rules delete objects under `raw-uploads/` and `converted-uploads/` after 7 days and
   under `inbound/` and `converted-inbound/` after 30 days, and purge old versions after
   1 day. Raw originals can carry GPS EXIF data until then. `media/` and `secure-docs/`
-  are never expired. Change the rules in `cdk/lib/anyhealth-stack.ts` if you need
+  are never expired. Change the rules in `cdk/lib/rcs-demo-stack.ts` if you need
   different retention. To delete these objects at once, use **Reset demo data** on the
   Interactive Demos tab ([Dashboard](README.md#dashboard)); it removes every version of
   the member-submitted files under `raw-uploads/`, `converted-uploads/`, `inbound/rcs/`
@@ -123,12 +123,15 @@ The sample also makes deliberate trade-offs that you must understand before you 
   and inbound media) carry an `aws:SourceAccount` condition with the deploying account's
   ID, as AWS recommends
   ([Cross-service confused deputy prevention](https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html#cross-service-confused-deputy-prevention)).
-  On a testing agent with these conditions, a file message, an inbound text and an
-  inbound photo all worked. The Amazon Simple Notification Service (Amazon SNS) topic
-  policy statement that lets the service publish inbound messages has no condition,
-  matching the AWS example for that option, and inbound messages in testing arrived
-  through the two-way role. This sample did not test a condition on the topic policy: to
-  add one, deploy it to a test account and confirm that inbound messages still arrive.
+  So does the statement in the event topic's customer managed AWS KMS key policy that
+  lets the service encrypt the events it publishes. On a testing agent with these
+  conditions, a file message, an inbound text and an inbound photo all worked. The Amazon
+  Simple Notification Service (Amazon SNS) topic policy statement that lets the service
+  principal publish has no condition, matching the AWS example for that option. The
+  configuration set's status events (delivery, read, failed) arrive through it; inbound
+  messages arrive through the two-way role instead. This sample did not test a condition
+  on the topic policy: to add one, deploy it to a test account and confirm that status
+  events still reach the Recipients tab.
 
 ## Open routes
 
@@ -139,7 +142,7 @@ because they return only static demo metadata:
 | Open route | Called by | Why it is open, and what limits it |
 |---|---|---|
 | `/` | anyone who pastes the bare `ApiUrl` into a browser | the handler has no route for it and answers a JSON `404`. The route accepts any method, so every request to it invokes the dashboard function; it returns no data |
-| `/webview/{proxy+}` | the member's in-app browser | serves the brand-substituted webview pages and the vendored Amazon Chime SDK script. The diagnostic pages report to it through a `?report=` query string, which the handler writes (up to 4,000 characters) to the dashboard function's log group, so treat that group as holding caller-supplied text. No recipient data |
+| `/webview/{proxy+}` | the member's in-app browser | serves the brand-substituted webview pages and the vendored Amazon Chime SDK script. The Camera & Mic Probe page reports to it through a `?report=` query string. The handler logs only the probe's known fields (capability flags, short status strings, a user agent cut to 300 characters, and track and device kinds without their labels) to the dashboard function's log group and drops anything else. No recipient data |
 | `/api/uploads/presign`, `/api/uploads/{ph}/{id}/status` | the upload webview | no key in a member session. `presign` requires a well-formed hash (`common.hash_phone` form) for a conversation that already exists, plus a supported image type; that stops unauthenticated scans and arbitrary input, not a caller who knows a member's number. `status` needs the upload id `presign` minted, and returns the photo's one-sentence description and a one-hour presigned link to the converted photo, so the 122-bit upload id (a `uuid4`) is the control for that data |
 | `/api/video/join`, `/api/video/ping`, `/api/video/status`, `/api/video/end` | the video-visit webview (`join`, `ping`, `end`) and the dashboard's Video Visit window (all four; `join`, `ping` and `end` with `role=clinician`) | no key in a member session. Each call names an unguessable visit token this deployment already minted, which expires in 30 minutes and can be exchanged for Chime SDK join material only a capped number of times (`MAX_JOINS` is 12; attendee-minutes are billed). The caller supplies `role`, so it is not a permission; the token is the control. `status` returns booleans, never recipient data |
 | `/api/secure-doc?ph=&doc=` | the Rx record webview | no key in a member session. Returns a 300-second presigned link to a document that must not cross the carrier network; the caller names a document id, never an S3 key, and the conversation must exist. Not a substitute for a member sign-in: see `dashboard_handler.get_secure_doc` |
@@ -160,7 +163,7 @@ in the in-message webview links it sends to member handsets.
 
 Every route that is not in the [Open routes](#open-routes) table needs the API key in the
 `x-api-key` header, which the Lambda authorizer checks against the Secrets Manager secret.
-[`cdk/lib/anyhealth-stack.ts`](cdk/lib/anyhealth-stack.ts) registers the routes and is the
+[`cdk/lib/rcs-demo-stack.ts`](cdk/lib/rcs-demo-stack.ts) registers the routes and is the
 authoritative list. The key is not an identity; see
 [Why the dashboard is local-only](#why-the-dashboard-is-local-only) for what a holder can
 do.
@@ -285,6 +288,22 @@ runs it. A variable already set in the shell takes priority over the files. So a
 terminal or CI job with `VITE_API_KEY` exported compiles the key into a build
 in the same way that a populated `web/.env` does. Every one of those files is gitignored.
 
+**A second file that holds keys.** When you wire more than one brand into the dashboard
+([Running more than one brand](SETUP.md#running-more-than-one-brand)),
+`scripts/wire-dashboard-brand.mjs` writes each brand's API URL and key, in plaintext, to
+`.deploy/dashboard-brands.json` (mode 600). Treat it like `web/.env`:
+
+- It is gitignored with the rest of `.deploy/`.
+- It is never compiled into `web/dist`. The dev-server endpoint that reads it
+  (`/__rcs-demo/brand-connections`) is registered for `npm run dev` only
+  (`apply: 'serve'`), so `npm run build` contains neither the keys nor the code that
+  serves them. The dashboard also reads older per-brand `web/.env.<Brand_Id>` files
+  through that same dev-only endpoint, so their keys are not compiled in either.
+- The dev server hands it to the page only for a same-origin `GET` from a loopback client
+  address with a loopback `Host` header (`localhost`, `127.0.0.1` or `[::1]`) and the
+  `X-RCS-Demo-Connections: 1` marker header. Any other request gets an error with no
+  connection data, even when you start the server with `--host`.
+
 **What someone does with the key.** The key is the only thing that gates the routes that
 send messages, change data and return recipient or account details. The API accepts
 requests from any origin (CORS `*`), so a web page's origin is no second barrier, and the
@@ -315,9 +334,10 @@ everyone.
 | What you do | Who can read the key | Verdict |
 |---|---|---|
 | `npm run dev` with the key in `web/.env`, on the default `localhost` address | The page in your browser, and anyone with access to your machine or browser profile. Vite hands the same values to the page it serves in development. | Supported |
-| `npm run dev -- --host`, or the dev-server port forwarded, tunneled or shared | Anyone who can reach that port. Vite listens on `localhost` unless you change `server.host` ([server options](https://vite.dev/config/server-options)) | Do not |
+| `npm run dev` with the keys in `.deploy/dashboard-brands.json` (written by the wiring command), on the default `localhost` address | The page in your browser, which receives every wired brand's key from the dev server, and anyone with access to your machine, your browser profile or that file | Supported |
+| `npm run dev -- --host`, or the dev-server port forwarded, tunneled or shared | Anyone who can reach that port. `web/vite.config.ts` sets `server.host` to `localhost` and `server.cors` to `false`, but a `--host` flag on the command line still overrides the host ([server options](https://vite.dev/config/server-options)). The brand-connections endpoint refuses non-loopback clients and `Host` headers, but a key in `web/.env` is still inlined into the modules the dev server serves | Do not |
 | `npm run build` with the key in `web/.env` or the shell, then the `web/dist` files hosted or sent anywhere (Amazon S3, Amazon CloudFront, GitHub Pages, a zip, a chat attachment) | Anyone who can fetch the page or open the files. The key is a string in the JavaScript, and minification does not hide it | **Never** |
-| The key pasted into the Settings tab (any build) | That browser profile's `localStorage`, in plaintext: `anyhealth_api_key`, plus the selected test device's phone number (`anyhealth_phone`), the API URL and the deep link. A `VITE_API_KEY` value takes precedence over the stored key. Any script that runs on the page's origin can read them | Use a browser profile you control. Hosting a build is not supported (see the paragraph after this table) |
+| The key pasted into the Settings tab (any build) | That browser profile's `localStorage`, in plaintext: `anyhealth_api_key` (single-brand setup) or `rcs-demo.brand.<id>.apiKey` (a wired brand), plus the selected test device's phone number (`anyhealth_phone` or `rcs-demo.brand.<id>.phone`), the API URL and the deep link. A `VITE_API_KEY` value takes precedence over the stored key. Any script that runs on the page's origin can read them | Use a browser profile you control. Hosting a build is not supported (see the paragraph after this table) |
 
 A build made with no `VITE_API_KEY` set carries no key, so it does not leak one
 by itself. It is still not a supported way to run the dashboard. The page has no
@@ -326,15 +346,21 @@ leaves that key in plaintext in the browser. Sign-in and per-user keys need the
 production change in [Scope](#scope--read-this-before-deploying) (a JWT authorizer or
 IAM authorization instead of the Lambda authorizer), with the dashboard hosted behind it.
 
-**Sharing the project.** `web/.env` and `web/dist/` are both gitignored, so `git clone` and
-`git archive` do not carry them. Zipping or copying your working folder does. Share the
-repository with git, not a copy of the folder. If you must send a copy, delete
-`web/.env` and any other `web/.env.*` file, `web/dist/`, `.deploy/` and `cdk/cdk.out/`
-first, and rotate the key if a copy that held it has already left your machine (see
+**Dev-server CORS.** The API accepts any origin (above), but the dashboard's own dev server
+does not. Vite's default lets any `localhost` origin read its responses, including the
+modules that inline `VITE_API_KEY` from `web/.env`, so `web/vite.config.ts` sets
+`server.cors: false`. Another local web page cannot read those responses cross-origin.
+
+**Sharing the project.** `web/.env`, `web/.env.*`, `.deploy/dashboard-brands.json` and
+`web/dist/` are all gitignored, so `git clone` and `git archive` do not carry them.
+Zipping or copying your working folder does. Share the repository with git, not a copy of
+the folder. If you must send a copy, delete `web/.env` and any other `web/.env.*` file,
+`.deploy/dashboard-brands.json`, `web/dist/`, `.deploy/` and `cdk/cdk.out/` first, and
+rotate the key if a copy that held it has already left your machine (see
 [Rotating the API key](#rotating-the-api-key)).
 
-**If the key might have been exposed**, because a build or `web/.env` left your
-machine, rotate it as described in [Rotating the API key](#rotating-the-api-key),
+**If the key might have been exposed**, because a build, `web/.env` or
+`.deploy/dashboard-brands.json` left your machine, rotate it as described in [Rotating the API key](#rotating-the-api-key),
 and delete the build that holds the old value.
 
 ## Deploying safely
@@ -344,7 +370,8 @@ and delete the build that holds the old value.
   account that you own, a local-only dashboard, no real data, and `cdk destroy` when you
   are finished.
 - Never commit `.deploy/` or `web/.env`: both are gitignored, and both contain
-  deployment-specific values (`web/.env` holds the API key in plaintext).
+  deployment-specific values (`web/.env` and `.deploy/dashboard-brands.json` hold API keys
+  in plaintext).
 
 ### Known scanner findings
 
@@ -418,7 +445,7 @@ before the secret holds it can stay refused for up to 5 minutes.
 **3. Expect the old key to keep working for up to 6 minutes.** Two caches add up:
 
 - API Gateway caches each authorizer result for 5 minutes (`resultsCacheTtl` in
-  `cdk/lib/anyhealth-stack.ts`), per distinct key value.
+  `cdk/lib/rcs-demo-stack.ts`), per distinct key value.
 - A warm authorizer execution environment reuses the secret it last read for up to
   60 seconds (`SECRET_CACHE_TTL_SECONDS` in `lambda/authorizer.py`).
 

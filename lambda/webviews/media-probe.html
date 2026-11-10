@@ -118,13 +118,21 @@
   }
 
   function report(data) {
-    var json = JSON.stringify(data);
     rawEl.textContent = JSON.stringify(data, null, 1);
+    // The copy sent to the server leaves out track labels (device names): the
+    // on-screen copy above keeps them, and the server logs only known fields.
+    var sent = Object.assign({}, data);
+    if (sent.tracks) {
+      sent.tracks = sent.tracks.map(function (t) {
+        return { kind: t.kind, state: t.state, muted: t.muted };
+      });
+    }
+    var json = JSON.stringify(sent);
     // Send the report back to the route that served this page, so there is a
     // record in CloudWatch even if the webview is too small to read or the
     // messaging app closes it. Deliberately an image GET and not
     // navigator.sendBeacon: sendBeacon issues a POST, /webview/{proxy+} is
-    // registered GET-only (cdk/lib/anyhealth-stack.ts), and sendBeacon returns
+    // registered GET-only (cdk/lib/rcs-demo-stack.ts), and sendBeacon returns
     // true once the request is *queued* — so a 405 would be lost silently, which
     // is the one failure mode a diagnostic must not have. An image GET also
     // needs no CORS and no api key.

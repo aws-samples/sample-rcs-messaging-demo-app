@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import ColumnLayout from '@cloudscape-design/components/column-layout';
@@ -6,18 +6,39 @@ import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import Box from '@cloudscape-design/components/box';
 import Link from '@cloudscape-design/components/link';
-import { api, Brand, RcsRegistry, Tester } from '../api';
+import type { Brand, RcsRegistry, Tester } from '../api';
+import { useApi, useSession } from '../session/SessionContext';
 
 export default function Guide({ brand, phone }: { brand: Brand | null; phone: string }) {
-  const name = brand?.brandName || 'AnyHealth';
+  // The selected brand's name from GET /api/brand — no brand literal in the UI,
+  // so this stays neutral until that load resolves.
+  const name = brand?.brandName || 'This brand';
   const [testers, setTesters] = useState<Tester[]>([]);
   // The RCS feature registry (content/rcs-features.json), served by the API.
   // Everything in section 7 and every number quoted in this page comes from it,
   // so a limit change is a JSON edit rather than a copy edit here.
   const [registry, setRegistry] = useState<RcsRegistry | null>(null);
 
-  useEffect(() => { api.getTesters().then(setTesters).catch(() => {}); }, [phone]);
-  useEffect(() => { api.getRcsFeatures().then(setRegistry).catch(() => {}); }, []);
+  const api = useApi();
+  const { track } = useSession();
+
+  // Only the first tester load counts toward the switch's loading state; the
+  // reloads on a target change are not tracked. A tracked failure has already
+  // been raised (labelled) by the session, so the handlers here stay silent.
+  const testersTracked = useRef(false);
+  useEffect(() => {
+    let p = api.getTesters();
+    if (!testersTracked.current) {
+      testersTracked.current = true;
+      p = track(p, 'recipients');
+    }
+    p.then(setTesters).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, phone]);
+  useEffect(() => {
+    track(api.getRcsFeatures(), 'RCS features').then(setRegistry).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
 
   // Only the service's own features, not this demo's patterns: a builder
   // evaluating RCS needs to know which is which.
@@ -38,7 +59,7 @@ export default function Guide({ brand, phone }: { brand: Brand | null; phone: st
       <SpaceBetween size="m">
         <Box variant="h2">How this demo works</Box>
         <Box color="text-body-secondary">
-          {name} is a fictitious healthcare brand demonstrating AWS End User Messaging RCS. A message
+          {name} is a fictitious brand demonstrating AWS End User Messaging RCS. A message
           from a registered recipient reaches an RCS agent, which publishes to SNS. A Lambda routes the
           message to a deterministic flow, the AI assistant, the store, or a live human — then replies
           with rich RCS content.

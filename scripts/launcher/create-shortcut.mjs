@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * Cross-platform entry point for creating the AnyHealth desktop launcher.
+ * Cross-platform entry point for creating the demo desktop launcher.
  * Detects the OS and runs the matching generator:
  *   macOS   -> make-desktop-shortcut.sh
  *   Windows -> make-desktop-shortcut.ps1

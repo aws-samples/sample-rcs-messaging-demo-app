@@ -1,19 +1,28 @@
-# AnyHealth: An RCS Tutorial
+# An RCS Tutorial
 
 *A walkthrough for readers who are new to AWS End User Messaging RCS (herein "RCS"). It explains what RCS is, how
 this demo is built, and why it's built that way. For exhaustive diagrams and
 per-use-case-example flow charts, see [architecture.md](architecture.md); for
 setup/run instructions, see the [README](../README.md) and [SETUP](../SETUP.md).*
 
-## 0. What (or who) is AnyHealth?
-AnyHealth itself is a **fictitious** healthcare brand. It's a stand-in so the
-demo has a plausible, relatable set of use cases — refill a prescription,
-confirm an appointment, ask a benefits question — but nothing about it is
-healthcare-specific under the hood. Swap the four `content/*.md` files and
-the same code demonstrates a retail loyalty program or a logistics tracking
-line just as well.
+## 0. Four brands, one chosen per deploy
+This demo ships a catalog of four **fictitious**, independent brands — AnyHealth
+(healthcare), AnyTravel (travel and hospitality), AnyWealth (financial services),
+and AnyHR (HR and workforce self-service). They are unrelated siblings: none is a
+parent or umbrella over the others. You pick exactly one to stand up with
+`-c brand=<id>` at deploy time (it defaults to AnyHealth), and that deploy
+registers one RCS agent and shows only that brand's use case examples.
 
-## 1. What RCS is, and why AnyHealth uses it
+Most of this tutorial uses AnyHealth for its examples, because it is the default
+and the richest brand — a plausible, relatable set of use cases such as refilling
+a prescription, confirming an appointment, or asking a benefits question. But
+nothing in the code is healthcare-specific under the hood: the brand is just the
+block the selected `-c brand=<id>` resolves in `content/brand.md`, together with
+that brand's grounding files under `content/`. Edit a brand's block and its
+grounding, and the same code demonstrates travel, finance, or workforce messaging
+just as well.
+
+## 1. What RCS is, and why these brands use it
 
 RCS (Rich Communication Services) is often described as "SMS, upgraded."
 That's the right mental model. It rides in the same native messaging app your
@@ -48,7 +57,7 @@ a strong argument for RCS.
 
 Treat RCS as your primary channel and SMS as the fallback. RCS adds verified branding, rich content and
 device-level delivery receipts, but it reaches a subset of your recipients. It is available in a growing list
-of countries, so check [[Supported countries and regions]](https://docs.aws.amazon.com/end-user-messaging/latest/userguide/nx-supported-countries.html)
+of countries, so check [[Supported countries and regions]](https://docs.aws.amazon.com/sms-voice/latest/userguide/rcs-supported-countries.html)
 for the countries you send to, and within a supported country a message goes over RCS only when the recipient's
 device and carrier support it. SMS is widely available (200+ countries, every handset), so adding an SMS
 fallback is the recommended best practice. `SendTextMessage` already works for SMS, and you can treat
@@ -72,7 +81,7 @@ they are **not** the same mechanism:
 
 If you send `SendRcsMessage` directly to an agent with no `FallbackConfiguration`,
 there is no safety net — the message either goes over RCS or it doesn't.
-The AnyHealth sample sends directly to its RCS test agent (no pool) to show the RCS-native experience. The sample wires per-message fallback on the entry message of 13 of its 20 use case examples (§4 names the rest), off
+The AnyHealth sample sends directly to its RCS test agent (no pool) to show the RCS-native experience. The sample wires per-message fallback on the entry message of 29 of the catalog's 41 use case examples (§4 names the rest), off
 unless you supply a fall-back SMS number at deploy time (see §4). A production system built on
 this pattern should almost always sit behind a pool with SMS fallbacks.
 
@@ -162,10 +171,13 @@ Two practical consequences of this model show up directly in the code:
   one matching type instead of listing them individually, so it's the specific
   choice to make. And note the agent's `TwoWayRcsEventsEnabled` list is a
   separate setting again from either: left unset, the agent forwards nothing,
-  and `DescribeRcsAgents` omits the field. On a testing agent, delivery events
-  appear once the agent is launched in a country; until then your delivered
-  count stays at zero while the `RCSMessagesDelivered` CloudWatch metric counts
-  every delivery.
+  and `DescribeRcsAgents` omits the field. This demo also subscribes `TEXT_ALL`
+  and `MEDIA_ALL`, for the SMS or MMS a fallback sends. One trap: if the SNS
+  topic is encrypted, it needs a customer managed KMS key that lets
+  `sms-voice.amazonaws.com` use it. With the AWS managed `alias/aws/sns` key,
+  two-way messages still arrive (they publish through a role in your account),
+  but every status event is dropped silently, and your delivered count stays at
+  zero while the `RCSMessagesDelivered` CloudWatch metric counts every delivery.
 
 ## 3. The message loop: one inbound path, everything converges
 
@@ -199,7 +211,8 @@ Inside the adapter, routing happens in priority order:
    - *Emergency language* — a short, reviewed list such as "chest pain",
      "can't breathe", "overdose", self-harm phrases, "I think I'm dying" or a
      bare "911", matched as whole words — gets one fixed reply (call 911; call
-     or text 988) with a Call Member Services chip and Main Menu, in every
+     or text 988) with the brand's call chip ("Call " plus its
+     `contactPhoneLabel`, such as Call Member Services) and Start Over, in every
      mode, including live. The 911 and 988 numbers are US numbers kept in one
      constant block in `channel_adapter.py`; change them if you deploy outside
      the US. This is a safety net for common phrasings, not a triage or
@@ -235,33 +248,49 @@ Inside the adapter, routing happens in priority order:
      keyword replies") has the rules and the `put-keyword` commands for other
      wording; the full account is in
      [architecture §2.1](architecture.md#21-keywords-and-where-a-keyword-is-answered).
-   - *Escape words* — exactly `menu`, `main menu`, `home` or `start over`
-     clears the active flow, leaves live mode and sends the welcome; exactly
+   - *Escape words* — exactly `menu`, `main menu`, `home`, `start over`,
+     `reset` or `restart` (a trailing "please" is ignored) resets the
+     conversation, the same as tapping Start Over: it clears the active flow,
+     leaves live mode and sends the short home menu (see
+     [Start Over](#start-over-one-reset-for-every-flow) in §4); exactly
      `human`, `agent`, `representative`, or a short phrase like "talk to a
      person", starts a handover. They work from any flow, and they match the
      whole message, so a sentence that merely contains one of those words is
      left to the router.
 3. **Live-agent mode gates the bot.** If a human has taken over the
    conversation (see §5), the bot goes silent — except a member can always
-   tap "Back to Assistant" (or type `menu`) to escape, and an inbound photo
+   tap "Back to Assistant" (or tap Start Over, or type `menu`) to escape, and an inbound photo
    still gets a one-line receipt so it isn't left hanging.
 4. **The inbound turn is classified**: a tapped-button postback, a typed
    free-text message, or media (inbound media arrives as a JSON envelope inside
    `messageBody`; this sample detects it by its `mediaStatus` field).
-5. **Postbacks resolve by a fallback ladder**: handover → main menu → the
-   currently active flow → a *prefix* match across every flow's postback
-   namespace (`rx_*`, `appt_*`, `store_*`, …) → the AI assistant. That
+5. **Postbacks resolve by a fallback ladder**: handover → reset (Start Over's
+   `reset_conversation`, and the older `home_menu`, `checkin_restart` and
+   `offers_browse` ids still on earlier cards) → the home menu's `home_*`
+   tiles → explicit cross-flow handoffs (room picks, Confirm Booking, the
+   offer and rebooking hotel handoffs, the schedule jumps) → the currently
+   active flow → every other flow the brand owns, each offered the postback in
+   turn (each owns its own prefix: `rx_*`, `appt_*`, `store_*`, …) → a
+   native-action tap nobody claimed is dropped → the active AI assistant or
+   the brand's default one, or the home menu when the brand has none. That
    prefix step matters more than it looks: flow state expires after 30
    minutes, but a button a member taps after that window should still work,
    and the prefix alone is enough to identify which flow it belongs to.
 6. **Free text falls through a small keyword router** (human/agent, refill,
-   appointment, store, verify, find) before landing on the Benefits Q&A
-   assistant as a default. The router matches whole words, so "order" does not
+   appointment, store, verify, find) before landing on the brand's default
+   assistant (`defaultVignette`: Benefits Q&A for AnyHealth, the brand's own
+   assistant for the others) or, for a brand with none, its home menu. Before
+   the router, a deterministic flow that just asked a question can read the
+   typed text as its answer (`on_freetext`). A keyword whose use case
+   example belongs to another brand is skipped. The router matches whole words, so "order" does not
    fire inside "disorder" or "person" inside "personal". There is deliberately
    no "sorry, I didn't understand that" dead end. Ahead of that router sits one
    keyword that re-opens the welcome message — the body an inbound deep link
    pre-populates, so scanning the QR code on the Recipients tab starts the
-   demo from the member's side. Note that this is a keyword *your code*
+   demo from the member's side. First contact (that keyword, `Start: Welcome`
+   or a bare greeting) gets the three-card welcome introduction; a Reset gets
+   only the short home menu, one card, so starting over does not replay the
+   lesson. Note that this is a keyword *your code*
    handles: a keyword registered with `put-keyword` is answered by the service
    with a fixed string, so it can't be a carousel, and the adapter treats the
    message as already answered, so the member would never see the welcome. Keep
@@ -275,9 +304,11 @@ Every outbound message — deterministic, AI-generated, or typed by an operator 
 goes out through one `common.send_rcs` function, the one place the Lambdas call
 `SendRcsMessage`. The flows' replies reach it through a `_send()` helper in the
 adapter, which also logs the outbound turn, applies the per-message TTL and
-fallback body a flow may set, and pauses a second between messages in a
-multi-message reply so they arrive in the order you intended. AI replies and
-operator replies call `common.send_rcs` directly and carry neither.
+fallback body a flow may set, adds the Start Over chip to the last message of
+the reply, and pauses a second between messages in a multi-message reply so
+they arrive in the order you intended. AI replies call `common.send_rcs`
+directly and carry no TTL or fallback body, but get the same Start Over chip;
+operator replies carry none of these.
 
 ## 4. Rich content: cards, carousels, and suggestions
 
@@ -332,11 +363,14 @@ Suggestions come at two levels, and the difference is not just the limit:
   once the recipient taps one or sends anything else.
 
 So message-level is the right place for navigation that only matters right now
-("Main Menu", "Done browsing"), and card-level is the right place for an action
+(the wellness store carousel's "View Cart" and "Start Over"), and card-level is the right place for an action
 the member may come back to. Designing around it the other way — collapsing a
 carousel's per-card buttons into one message-level chip list to stay under a
 limit — quietly turns durable buttons into ones that vanish on the member's
-first reply.
+first reply. AnyTravel's Room Booking follows the same rule: when the assistant
+offers the room types, the demo replaces those reply chips with a carousel of
+one card per room type (photo, sleeps, nightly rate) whose card-level **Choose**
+chip stays on the card, and a tap on it answers with that room's second photo.
 
 `RequestLocation` is the only suggestion that asks the member for data rather
 than giving them an action, and it is worth trying on a handset: the reply is a
@@ -344,7 +378,8 @@ separate inbound message carrying latitude and longitude — no street address,
 no place name — and the member is free to ignore it. Find Care offers the chip
 whenever it does not know where the member is, and `handle_location` in
 `lambda/channel_adapter.py` feeds the coordinates back into the same Bedrock
-conversation. Round them before you log them; they may be precise enough to
+conversation. AnyBuild's Delivery Location and AnyTravel's Bag Tracking also ask
+for a location; while one of them is active, the coordinates go to that flow instead. Round them before you log them; they may be precise enough to
 identify a home, for example. Every action chip the AI builds (this one, and the Call Member
 Services dial chip) carries an id the adapter reserves and ignores when the tap
 is reported back, whatever id the model wrote; the rule is in
@@ -370,8 +405,9 @@ rich content above, set a TTL, or take a per-message fallback. The
 capability-by-capability comparison of the two is here - 
 [[Choosing between SendTextMessage and SendRcsMessage]](https://docs.aws.amazon.com/sms-voice/latest/userguide/rcs-rich-messaging.html#rcs-rich-messaging-choosing)
 
-AnyHealth's welcome cards, the Rx refill card, and the wellness-store
-catalog are all direct demonstrations of this API surface. The `Reply`
+AnyHealth's welcome cards (each carries the selected brand's own card image, the
+`cardImage` in its block of `content/brand.md`), the Rx refill card, and the
+wellness-store catalog are all direct demonstrations of this API surface. The `Reply`
 suggestion carries a `PostbackData` string your code defines — AWS's guidance
 is to put a structured identifier in there so your Lambda can route the
 response without a database lookup, and that's exactly the `rx_refill_now` /
@@ -398,7 +434,8 @@ twice. (The one-liner that reads the `EventType` values from the service model
 is in `lambda/common.py` above `_EVENT_EXPLANATIONS`.) Second, TTL is the
 documented trigger for per-message fallback, which is why the pairing "short TTL
 + SMS fallback" is the canonical OTP pattern: try RCS for 30–60 seconds, then
-send the code as SMS instead of leaving the member with nothing. This demo wires that on the verification use case example — and a fallback body on other use cases (all but the two AI assistants, the clinic-initiated
+send the code as SMS instead of leaving the member with nothing. This demo wires that on the verification use case example, AnyTravel's flight
+status alert and AnyWealth's fraud alert — and a fallback body on other use cases (all but the AI assistants, the clinic-initiated
 reschedule, Video Visit, and the three diagnostics / experiments; Video Visit
 has none on purpose, because a one-visit join link is a poor fit for a text
 message) — but leaves it **off unless you deploy with
@@ -408,6 +445,45 @@ origination identity the stack can't provision for you. While it is off, no
 fires; the Settings tab tells you which state you are in, and the adapter logs
 `RCS FALLBACK SKIPPED` per send rather than dropping the request silently.
 [[Per-message SMS or MMS fallback]](https://docs.aws.amazon.com/sms-voice/latest/userguide/rcs-fallback-per-message.html)
+
+### Start Over: one reset for every flow
+
+Message-level chips vanish on the next reply, so a member deep in a flow needs a
+way back that is always on screen. Every bot message carries one: the last
+message of each bot turn, deterministic or AI, gets a **Start Over** chip
+(postback `reset_conversation`), added in `channel_adapter.py` rather than by
+each flow or by the model. The adapter removes any other "Main Menu" or
+"Start Over" chip first, so there is exactly one, always last. A few messages go
+without it on purpose: the welcome introduction and the home menu, which are
+where a Reset starts and lands, the live-handover cards, whose own "Back to
+Assistant" chip is the way out, and anything an operator types. Typing a whole-message `menu`,
+`main menu`, `home`, `start over`, `reset` or `restart` does the same from any
+flow, including live mode. Emergency wording, the opt-out list and
+`STOP`/`HELP`/`UNSTOP` still come first (§3).
+
+A Reset forgets the session: the active flow, live mode, a half-built booking
+and the offer that started it, the cart, a pending PTO request or shift swap, a
+pending verification code and any pending upload. It keeps the transcript, a
+shift that is clocked in (a record of something that really happened, not a
+conversation choice) and the photo the dashboard is showing.
+
+The assistant's memory needs one more step. The AI assistants rebuild their
+context from the stored transcript on every turn, so clearing flow state alone
+would leave the model remembering the old booking. Deleting the history would
+fix that, but it would also empty the dashboard transcript an operator reads.
+So a Reset writes a `CONVERSATION_RESET` event row instead, and
+`common.history_since_reset` hands the model only the turns after the newest
+one. The transcript keeps everything, and shows the Reset as an event.
+
+The home menu a Reset lands on belongs to the selected brand: each brand's block
+in `content/brand.md` has a `homeMenu` list of `{ label, postback }` entries (at
+most ten, one short of the eleven-chip message limit), and both the home menu
+and the welcome introduction build their chip row from it. Adding,
+renaming or removing a tile is a content edit, and
+`scripts/check-rcs-registry.py` fails if a brand has no usable `homeMenu`. Both
+invite the member to ask a question only when the brand has a default
+assistant. Every catalog brand has one today; a brand whose
+`defaultVignette` is empty asks the member to pick a tile instead.
 
 ## 5. Live-agent handover
 
@@ -421,7 +497,8 @@ Lambda that every bot reply goes through — so a human's message is built,
 sent, and logged by identical code, and shows up in the same transcript with
 no separate "human message" code path to keep in sync. Tapping "Back to
 Assistant" flips `STATE` back and hands control to the bot again. Typing
-`menu` does the same and sends the welcome. Apart from that, the only typed
+`menu` or tapping Start Over also hands control back, as a full Reset that
+sends the short home menu (§4). Apart from that, the only typed
 message the bot still answers on a live thread is emergency wording: the fixed
 911/988 reply goes out, labeled "Automatic safety reply" in the transcript, so
 the operator can see what the member was told and follow up.
@@ -488,7 +565,7 @@ Neither the bucket policy for the RCS service principal (`media/` and the
 inbound prefixes) nor the channel adapter's role covers the second one's prefix.
 
 The same argument runs in the other direction. Everything above is about a
-document coming *in*; the **Loan Agreement** use case example sends one *out* to
+document coming *in*; AnyWealth's **Loan Agreement** use case example sends one *out* to
 be read and signed. It is a `Review & Sign` `OpenUrl` (`WEBVIEW`, `TALL`) to
 `/webview/loan-agreement`, a self-contained three-page installment-loan
 agreement the member initials on each page and signs by finger or mouse; on
@@ -607,11 +684,12 @@ A few more pieces round out the picture, covered in depth in
   routes and [Open routes](../SECURITY.md#open-routes) lists the rest. This is
   deliberately a lightweight control appropriate for a demo, not a real identity
   provider.
-- **Thirteen member-facing use case examples and seven internal ones** run on
+- **Thirty customer-facing use case examples and eleven internal ones** run on
   the exact same channel and the exact same Channel Adapter — RCS doesn't care
-  whether the "customer" on the other end is a patient or an employee. Four of
-  the internal ones are staff self-service (Clock In/Out, My Schedule, PTO
-  Request, Shift Swap); the other three are operator tooling that lives in the
+  whether the "customer" on the other end is a patient or an employee. Eight of
+  the internal ones are staff self-service (AnyHR's Clock In/Out, My Schedule,
+  PTO Request, Shift Swap and HR assistant; AnyBuild's Field Schedule, Job
+  Readiness and jobsite assistant); the other three are operator tooling that lives in the
   dashboard's Settings tab under **Diagnostics & experiments** — a Camera & Mic
   Probe and two IVS webview experiments (below) — rather than in the Interactive
   Demos list.
@@ -631,24 +709,41 @@ A few more pieces round out the picture, covered in depth in
   or the stack isn't reachable. A commit that only touches `docs/` moves
   neither number, which is the point: the string is there to answer "is this
   browser running the same code as the Lambdas I deployed?"
-- **Nothing about the healthcare theme is structural.** Four Markdown files
-  under `content/` supply the brand identity, the knowledge the AI
-  assistants are grounded on, the store catalog, and the staff-facing data.
-  Edit them and redeploy, and the same infrastructure demonstrates a
-  different brand in the cards, webviews, and dashboard. The registered agent
-  identity (logo, banner, display name) is separate: the stack has no
-  registration resource, so a content change does not reach it; it stays as
-  registered during agent setup. Some registered brand assets cannot be changed
-  after the registration is submitted, and updates to others are reviewed (see
+- **Nothing about any brand's theme is structural.** `content/brand.md` holds a
+  catalog of brand identity blocks, and `-c brand=<id>` picks the one a stack
+  stands up (default AnyHealth). Each brand lists its own grounding files
+  under `content/` — the knowledge the AI assistants are grounded on, the
+  catalogs, and the staff-facing data — so AnyHealth reads `benefits.md`,
+  `providers.md`, `store.md`; AnyHR reads `workplace.md`; AnyTravel reads
+  `hotels.md` and `flights.md`; AnyWealth reads `wealth.md`; AnyBuild reads
+  `construction.md`. Edit a brand's block and its grounding
+  and redeploy, and the same infrastructure demonstrates that brand in the cards,
+  webviews, and dashboard. The registered agent identity (logo, banner, display
+  name) is separate: the stack has no registration resource, so a content change
+  does not reach it; it stays as registered during agent setup. Some registered
+  brand assets cannot be changed after the registration is submitted, and updates
+  to others are reviewed (see
   [Managing RCS agents](https://docs.aws.amazon.com/sms-voice/latest/userguide/rcs-agents.html)). A
-  `brandName` change that alters its slug also changes the stack name, so on an
-  existing deployment `cdk destroy` first rather than redeploying (see
+  `brandName` change that alters its slug, or selecting a different brand, changes
+  the stack name and deploys a separate stack, so `cdk destroy` the old one first
+  rather than expecting an in-place update (see
   [Editing the demo](../README.md#editing-the-demo)).
+- **A deploy opens only its own brand's use case examples.** Each brand block
+  lists the examples it owns (`vignettes`, which the registry check holds equal
+  to the dashboard catalog), and `welcome` and `handover` are allowed everywhere.
+  A `Start:` trigger, tile, typed request, stale chip or shared location that
+  belongs to another brand gets the selected brand's home menu instead, so a hotel
+  guest who types "order room service" never lands in a pharmacy store. Each
+  brand also has its own sample member in its block, which the AI prompt carries
+  (a name on the Recipients tab still wins), and the sample dates (AnyHealth's
+  appointment, AnyHR's shifts and PTO) are computed from today, so they are always
+  upcoming. See
+  [architecture §2.4](architecture.md#24-brand-isolation-a-deploy-opens-only-its-own-vignettes).
 
 ## 9. Where to go next
 
 - Run it yourself: [README.md](../README.md) — quick start, clean up, cost.
-- Full diagrams and a flow chart for all twenty use case examples:
+- Full diagrams and flow charts for the use case examples:
   [architecture.md](architecture.md).
 - Set up your own RCS agent: [SETUP.md](../SETUP.md#2-set-up-your-rcs-agent).
 - AWS's own RCS documentation, starting point:

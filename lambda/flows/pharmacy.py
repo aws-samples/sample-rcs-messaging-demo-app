@@ -99,7 +99,10 @@ def _refill_confirmed():
                         {"CreateCalendarEvent": {
                             "Text": "Remind Me", "PostbackData": "rx_remind",
                             "Title": "Pick up Magic Medicine", "Description": "Walnut St Pharmacy, Philadelphia",
-                            "StartTime": 1752066000, "EndTime": 1752069600,
+                            # Tomorrow 10:00-11:00, matching "Ready for pickup:
+                            # Tomorrow after 10:00 AM" above, computed at send time.
+                            "StartTime": c.sample_epoch(c.sample_date(1), "10:00"),
+                            "EndTime": c.sample_epoch(c.sample_date(1), "11:00"),
                         }},
                         # Answers with both documents (see _pharmacy_documents),
                         # so the label is not "Medication Guide" any more. This
@@ -128,7 +131,7 @@ def _pharmacy_documents(phone_hash):
     * The file is referenced by `s3://` URI, not uploaded in the request. AWS
       downloads it from your bucket, rehosts it, and presigns it for the
       aggregator, so the bucket needs no public access — see the bucket policy
-      in cdk/lib/anyhealth-stack.ts.
+      in cdk/lib/rcs-demo-stack.ts.
     * A file message carries no title, description or caption. Anything the
       member needs to read has to be a separate message, which is why the text
       below is sent first.

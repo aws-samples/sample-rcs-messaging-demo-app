@@ -1,4 +1,4 @@
-AnyHealth — RCS Messaging Demo
+AWS End User Messaging RCS Demo Catalog
 Copyright 2026 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 This product includes software developed at
@@ -53,10 +53,15 @@ those licenses first.
 Sample data disclaimer
 ------------------------------------------------------------------------------
 
-"AnyHealth" is a fictitious brand created for this demonstration. It is not a
-real company and is not affiliated with any real entity. All plan details,
-benefit amounts, provider listings, prices, staff rosters, product catalogs, and
-member profiles in content/*.md are illustrative sample data only.
+Every brand in the content/brand.md catalog ("AnyHealth", "AnyTravel", "AnyWealth",
+"AnyHR" and "AnyBuild" in this version, and any brand added later) is a
+fictitious brand created for this demonstration, as are the companies, people, properties
+and places in their sample data (for example Quillfeather Homes and Brindlewood
+Supply Co.). None of them is a real company, and none is affiliated with any real
+entity. All plan details, benefit amounts, provider listings, hotel and room
+details, account activity, prices, staff rosters, schedules, product catalogs,
+documents and member profiles in content/*.md and lambda/webviews/ are
+illustrative sample data only.
 
 Any third-party organization names that appear in the sample content are the
 trademarks of their respective owners, are used only as placeholder examples of
@@ -64,4 +69,9 @@ the kind of data a real deployment would hold, and do not indicate any
 affiliation, endorsement, or actual network/coverage relationship. Replace them
 before using this sample for anything customer-facing.
 
-The placeholder artwork in media/ was generated for this repository.
+The images in media/ were created for this repository and are placeholders. The
+logos, banners, cards and tiles are simple vector drawings made for this
+repository; scripts/gen-placeholder-assets.sh regenerates plain placeholders.
+The AnyTravel property, room and offer photographs (the .jpg files in
+media/anytravel/hotels/ and media/anytravel/rooms/) are AI-generated and do not show
+real properties.

@@ -104,7 +104,7 @@ def preview_message():
 
 def _verified():
     return [{
-        "Content": {"TextMessage": {"Body": "Verified. You're securely signed in to AnyHealth."}},
+        "Content": {"TextMessage": {"Body": f"Verified. You're securely signed in to {c.brand_name()}."}},
         "Suggestions": [{"Reply": {"Text": "Main Menu", "PostbackData": "home_menu"}}],
     }]
 

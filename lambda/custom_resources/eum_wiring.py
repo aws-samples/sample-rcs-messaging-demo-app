@@ -66,7 +66,7 @@ def on_event(event, context):
     event_dest = props["EventDestinationName"]
     topic_arn = props["InboundTopicArn"]
     role_arn = props["TwoWayRoleArn"]
-    event_types = props.get("MatchingEventTypes") or ["RCS_ALL"]
+    event_types = props.get("MatchingEventTypes") or ["RCS_ALL", "TEXT_ALL", "MEDIA_ALL"]
     agent_event_types = props.get("TwoWayRcsEventsEnabled") or ["ALL"]
     media_bucket = props.get("TwoWayMediaS3BucketName", "")
     media_role_arn = props.get("TwoWayMediaS3RoleArn", "")
@@ -141,12 +141,13 @@ def _ensure_event_destination(config_set, event_dest, topic_arn, event_types):
     # below is a separate, also-required call: this one buys delivery receipts,
     # that one buys button taps, and neither substitutes for the other.
     #
-    # Subscribe the RCS family explicitly (RCS_ALL) rather than ALL; RCS_ALL is
-    # the RCS subscription described in the RCS events guide. On a testing
-    # agent, delivery events appear once the agent is launched in a country; the
-    # RCSMessagesDelivered CloudWatch metric counts deliveries in the meantime.
-    # After launch, compare the delivery counts in the dashboard with that
-    # metric to confirm the subscription is matching events.
+    # Subscribe the RCS, SMS and MMS families (RCS_ALL, TEXT_ALL, MEDIA_ALL)
+    # rather than ALL, which would add voice events this stack never produces.
+    # TEXT_ALL and MEDIA_ALL carry the SMS or MMS that a per-message fallback
+    # sends when the RCS leg fails. These events are published as the sms-voice
+    # service principal, so the topic's KMS key must allow it (see the topic in
+    # rcs-demo-stack.ts). To confirm events are flowing, compare the dashboard's
+    # delivered counts with the RCSMessagesDelivered CloudWatch metric.
     # https://docs.aws.amazon.com/sms-voice/latest/userguide/rcs-events.html
     params = dict(
         ConfigurationSetName=config_set,

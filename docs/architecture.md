@@ -1,6 +1,6 @@
-# AnyHealth — Architecture
+# Architecture
 
-This document describes how the demo is deployed and works. It deploys via one CDK stack, uses a single RCS agent, and offers twenty use case examples that all ride the same inbound/outbound path.
+This document describes how the demo is deployed and works. The demo ships a catalog of independent, fictitious brands covering various industries and use cases (in this version AnyHealth, AnyTravel, AnyWealth, AnyHR and AnyBuild), and each stack is one brand, selected with `-c brand=<id>` (default `anyhealth`); none is a parent or umbrella over the others. Each brand you deploy is its own CDK stack with its own RCS agent (`scripts/deploy.mjs` deploys several, one after another), and offers that brand's use case examples, which all ride the same inbound/outbound path. The examples described below are drawn from across the brands; the dashboard shows one brand at a time, the active one (§5). Most belong to AnyHealth, which is the default and the richest brand.
 
 This page assumes you know what RCS is. If you don't, read
 [tutorial.md](tutorial.md) first — it covers the channel, the API surface, and
@@ -51,23 +51,30 @@ edges are deploy-time or supporting wiring.
    they are independent settings and can go to different destinations, and a
    configuration set can also target Amazon Data Firehose or CloudWatch Logs
    instead of SNS.
-   <br>That event destination should match **`RCS_ALL`**, not `ALL`. The guide
-   documents `RCS_ALL` as the way "to subscribe to all RCS event types with a
-   single matching type, instead of listing each RCS event type individually".
-   On a **testing** agent, delivery events appear once the agent is launched in a
-   country. Until then the `RCSMessagesDelivered` CloudWatch metric still counts
-   every delivery, which is why the Recipients tab's Delivered/Read columns stay
-   at zero until country launch.
+   <br>That event destination matches **`RCS_ALL`**, **`TEXT_ALL`** and
+   **`MEDIA_ALL`**. `RCS_ALL` is the guide's way "to subscribe to all RCS event
+   types with a single matching type, instead of listing each RCS event type
+   individually"; `TEXT_ALL` and `MEDIA_ALL` add the SMS or MMS that a
+   per-message fallback sends. `ALL` would also add voice events, which this
+   stack never produces. A testing agent publishes these events too: an
+   `RCS_DELIVERED` arrives within seconds of a send.
+   <br>The topic is encrypted with a **customer managed** KMS key whose policy
+   lets `sms-voice.amazonaws.com` use it. This matters: the event destination
+   publishes as the service principal itself, and the AWS managed
+   `alias/aws/sns` key cannot grant it access, so with that key every status
+   event is dropped silently while two-way messages, which publish through a
+   role in the account, still arrive.
 3. SNS invokes the **Channel Adapter** Lambda.
-4. For the two AI use case examples the adapter calls **Bedrock Converse**, grounded on
+4. For the AI use case examples the adapter calls **Bedrock Converse**, grounded on
    `content/*.md` staged into the function at synth.
 5. The adapter reads and writes conversation state in the **DynamoDB** single
    table — transcript, active flow, cart, one-time code, shift/PTO/swap state.
 6. The reply goes back out with `SendRcsMessage`, optionally carrying
-   `TimeToLive` (used by the verification use case example so an expired code can't be
-   delivered late) and, when a fallback number is configured at deploy time, a
+   `TimeToLive` (used by the verification use case example, AnyWealth's fraud
+   alert and AnyTravel's flight status alert, so a late delivery gives way to the
+   fallback) and, when a fallback number is configured at deploy time, a
    per-message `FallbackConfiguration` so a message RCS can't deliver arrives as
-   SMS instead — the entry message of 13 of the 20 use case examples carries a
+   SMS instead — the entry message of 29 of the 41 use case examples carries a
    fallback body (the AI assistants, the clinic-initiated reschedule, Video
    Visit, and the three diagnostics and experiments do not). See
    §"Per-message SMS fallback" below.
@@ -101,9 +108,10 @@ edges are deploy-time or supporting wiring.
 
 **Dashboard and control plane**
 
-14. The operator's local Cloudscape app calls the HTTP API with `x-api-key` for
-    anything that sends a message, mutates data, **or returns recipient data**
-    (testers, transcripts, member media, spend limits).
+14. The operator's local Cloudscape app calls the HTTP API of the active brand's
+    stack with that stack's `x-api-key` for anything that sends a message,
+    mutates data, **or returns recipient data** (testers, transcripts, member
+    media, spend limits).
 15. Those routes are gated by a **Lambda authorizer** (simple response, 5-minute
     result cache). See "API routes and auth" below for the exact split.
 16. The authorizer compares the presented key against the **Secrets Manager**
@@ -151,14 +159,17 @@ edges are deploy-time or supporting wiring.
 | HTTP API | apigatewayv2, CORS open, `HttpLambdaAuthorizer` on writes + reads of recipient or account data, access log on the `$default` stage (JSON line per routed request: route template, source IP, no path or query string by design; [SECURITY.md](../SECURITY.md#api-access-log) says what the log holds and what was checked on a deployed stack) |
 | DynamoDB | single table, on-demand, CMK, PITR, TTL attribute, `gsi1` |
 | S3 | media bucket (versioned, access-logged, CORS `PUT` for presigned uploads) + separate access-logs bucket; the roles of this sample's own functions (channel adapter, dashboard, media convert) are granted per key prefix, with no action wildcards, while the CDK-created helper functions (such as the bucket deployment) keep the library's grants |
-| SNS | inbound topic, `alias/aws/sns` encryption |
+| SNS | inbound topic, encrypted with a customer managed KMS key that lets `sms-voice.amazonaws.com` publish status events |
 | Secrets Manager | `<prefix>-demo-api-key` |
 | CloudWatch Logs | one group per function plus one for the API access log (`/aws/vendedlogs/apigateway/<prefix>-demo-api`), all with 2-week retention |
 | IAM | Lambda execution roles use `AWSLambdaBasicExecutionRole` plus per-function inline policies; two-way roles for SNS publish and inbound-media `PutObject`; `chime:CreateMeeting`/`CreateAttendee`/`DeleteMeeting`/`DeleteAttendee` on the dashboard Lambda only (§4.14) |
 | EUM (via custom resource) | configuration set + event destination, two-way enablement, inbound media destination |
 
-The RCS agent is **not** in the stack (see step 22). Setup writes its id to
-`.deploy/agent.json` for `cdk deploy` to read.
+The RCS agent is **not** in the stack (see step 22). Setup records its id per brand
+in `.deploy/agent.json` (`agents.<brandId>`, written by `scripts/create-agent.mjs` or
+`scripts/record-agent.mjs`) for `cdk deploy` to read. Synth checks that the agent's
+registration names the selected brand and stops if it names another one
+(`-c skipAgentCheck=true` skips the check).
 
 ### DynamoDB single-table key model
 
@@ -168,10 +179,14 @@ partition key.
 
 | pk | sk | Holds |
 |---|---|---|
-| `CONV#{hash}` | `MSG#{ts}` | one transcript turn (inbound, outbound, or status event) |
+| `CONV#{hash}` | `MSG#{ts}#{8 hex}` | one transcript turn (inbound, outbound, or status event), including the `CONVERSATION_RESET` event row a Reset writes to cut the assistant's memory (§2.3) |
 | `CONV#{hash}` | `META` | last-seen, counters |
 | `CONV#{hash}` | `STATE` | bot vs. LIVE mode |
 | `CONV#{hash}` | `LATEST_MEDIA` | newest photo per rich-media use case example |
+| `CONV#{hash}` | `BOOKING_CARDED` | Room Booking: the property already shown as a Property_Card in this booking (30-minute TTL, §4.16) |
+| `CONV#{hash}` | `BOOKING_CONTEXT` | Room Booking: the offer details chosen in Travel Offers (30-minute TTL, §4.16) |
+| `CONV#{hash}` | `BOOKING_QUOTE` | Room Booking: the priced stay the summary showed and the confirmation is built from, with its reference once confirmed (30-minute TTL, §4.16) |
+| `CONV#{hash}` | `BOOKING_OFFER` | Room Booking: the Travel Offer id the booking started from, the only source of a member rate (30-minute TTL, §4.16) |
 | `FLOW#{hash}` | `ACTIVE` | active use case example (30-minute TTL) |
 | `CART#{hash}` | `ITEMS` | wellness-store cart |
 | `OTP#{hash}` | `CODE` | one-time code (5-minute validity) |
@@ -179,12 +194,15 @@ partition key.
 | `PTO#{hash}` | `PENDING` | pending PTO request |
 | `SWAP#{hash}` | `PENDING` | pending shift-swap offer |
 | `UPLOAD#{hash}` | `{upload_id}` | webview upload state machine |
+| `BUILD#{hash}` | `evidence`, `evidence_log`, `delivery`, `plan`, `ready` | AnyBuild flow state: open evidence ticket, its item log, the drop spot, the crew answer, the readiness chain (1-day TTL, §4.17) |
+| `NATIVE_MEDIA#{ref}` | `SOURCE` | maps an inbound RCS photo's S3 key to its transcript row, so `media_convert` updates that row (30-day TTL) |
 | `VISIT#{token}` | `MEETING` | video visit: Chime meeting + per-role heartbeats (30-minute TTL) |
 | `TESTER#{hash}` | `PROFILE` | registered test device |
 | `SYSTEM` | `RCS_QUOTA_ALERT` | cached account spend-limit warning |
 | `SYSTEM` | `TYPING#{hash}` | "this recipient is composing right now" presence (5-minute TTL, read through a freshness filter) |
 
-Conversation items expire after 30 days; flow state after 30 minutes.
+Transcript turns and the Reset marker expire after 30 days, status events after 7 days
+and indicator rows after 1 day; flow state after 30 minutes.
 
 ### API routes and auth
 
@@ -204,12 +222,13 @@ Conversation items expire after 30 days; flow state after 30 minutes.
 
 [SECURITY.md](../SECURITY.md#routes-that-need-the-api-key) lists the same split by what each route returns or changes.
 
-The dashboard sends the key on the authenticated reads via `req(..., authed=true)`
-in `web/src/api.ts` — **the route list above and that file have to change
-together**, or the dashboard starts returning 401s.
+The dashboard sends the key on the authenticated reads via `req(b, ..., authed=true)`
+in `web/src/api.ts`, where `b` is the binding of the client making the call (§5)
+— **the route list above and that file have to change together**, or the
+dashboard starts returning 401s.
 
 Note the API hostname is not a control: `common.py` builds every in-message
-webview link from `API_BASE_URL` and ten flow modules send such links to member
+webview link from `API_BASE_URL` and fourteen flow modules send such links to member
 handsets.
 
 A shared API key is a lightweight control appropriate for a demo, not a
@@ -273,7 +292,7 @@ This project uses the first, because every send here is rich. The fallback is
 **opt-in at deploy time** and off by default:
 
 ```bash
-cd cdk && npx cdk deploy -c smsFallbackNumber=+12065550100
+(cd cdk && npx cdk deploy -c brand=<id> -c smsFallbackNumber=+12065550100)
 ```
 
 That context value becomes the `SMS_FALLBACK_NUMBER` environment variable on the
@@ -310,10 +329,10 @@ Four properties are worth knowing before relying on it:
   `RCS FALLBACK SKIPPED`; the Settings tab reads **Not configured**; and because
   no `FallbackConfiguration` was ever attached, `RCS_FALLEN_BACK_TO_SMS` cannot
   fire and the Recipients tab's *Fell back to SMS* column stays at zero. A zero
-  there means "fallback was never configured", not "RCS never failed". On a
-  testing agent, Delivered and Read stay at zero (see item 2 in section 1), and
-  Fell back to SMS also stayed at zero in this sample's testing with a fallback
-  number set.
+  there means "fallback was never configured", not "RCS never failed". With a
+  fallback number set, the fallback SMS's own delivery or failure arrives as a
+  `TEXT_*` event (the destination subscribes `TEXT_ALL`) and counts in Delivered
+  or Failed.
 - **A half-configured fallback is worse than none, so synth refuses it.**
   `send_rcs` gates on `SMS_FALLBACK_NUMBER` being non-empty, not on the number
   being usable, and `SendRcsMessage` rejects the *entire* call when the
@@ -393,8 +412,10 @@ Reading it top to bottom:
   1. **Emergency language** — a short, reviewed list of whole-word patterns
      (chest pain, can't breathe, overdose, self-harm phrases, a threat to hurt
      someone, "I think I'm dying", "I can't go on", a bare `911` or `988`, …)
-     gets one fixed reply: call 911, or call or text 988, with a Call Member
-     Services chip and Main Menu. It applies in every mode, including LIVE, where
+     gets one fixed reply: call 911, or call or text 988, with the brand's call
+     chip (`common.call_label()`: "Call " plus the brand's `contactPhoneLabel`,
+     for example Call Traveler Services) and the Start Over chip that the send path
+     adds (§2.3). It applies in every mode, including LIVE, where
      the reply is labeled "Automatic safety reply" in the transcript and the
      CloudWatch line says the thread is live. The numbers are US numbers in one
      constant block in `channel_adapter.py`; a deployment outside the US must
@@ -416,20 +437,27 @@ Reading it top to bottom:
      location, media, a `Start:` message) meets it right after it is logged, ahead
      of the LIVE gate. A photo's reply is skipped the same way, but its
      conversion and classification still run in `media_convert` (§2.1).
-  4. **Global escape words** — exactly `menu`, `main menu`, `home` or `start
-     over` clears the active flow, leaves LIVE mode and sends the welcome;
-     exactly `human`, `agent`, `representative` or a short phrase such as "talk
-     to a person" hands over (ignored while LIVE, when a human already has the
-     thread). Matches are exact, never substrings, so "I'm at home" is not an
-     escape.
+  4. **Global escape words** — exactly `menu`, `main menu`, `home`, `start
+     over`, `reset` or `restart` (a trailing "please" is ignored) performs the
+     conversation Reset (§2.3): it clears the session, leaves LIVE mode and sends
+     the brand's short Home_Menu card. Exactly `human`, `agent`, `representative`
+     or a short phrase such as "talk to a person" hands over (ignored while LIVE,
+     when a human already has the thread). Both lists match the whole message
+     only, never substrings, so "I'm at home" or "please reset my password" is
+     not an escape.
 - **LIVE mode gates the bot.** Once a conversation is handed to a human, the bot
   stops replying — apart from the screened typed text above, with five
   deliberate exceptions, all of them there so a member is never left tapping a
   dead button:
-  - `handover_end` **or** `home_menu` returns control to the assistant.
-    `home_menu` is included because it's on nearly every card, so it's the
-    escape hatch a stuck member actually reaches for (e.g. a demo left in LIVE
-    mode with nobody staffing the dashboard).
+  - `handover_end` returns control to the assistant and sends the "You're back
+    with the assistant" card. A **Reset postback** (`reset_conversation`, the
+    Start Over chip, or one of the older ids in `RESET_POSTBACKS`: `home_menu`,
+    `checkin_restart`, `offers_browse`) performs the full Reset (§2.3), which
+    also puts the thread back in bot mode. Start Over is included because it's
+    on nearly every bot message, so it's the escape hatch a stuck member actually
+    reaches for (e.g. a demo left in LIVE mode with nobody staffing the
+    dashboard); the live-mode nudge card's "Back to Assistant" chip carries
+    `home_menu` for the same reason.
   - `photo_secure_upload` starts the secure-upload flow, because tapping it is
     an explicit member action rather than the bot interrupting.
   - Successfully-received inbound media gets a one-line “✅ Picture received.”
@@ -445,10 +473,14 @@ Reading it top to bottom:
   envelope inside `messageBody`; this sample detects it by its `mediaStatus`
   field. A shared location carries `"type":"LOCATION"`, and it routes to
   `handle_location` (§4.6) rather than being handed to the AI as raw JSON.
-- **Postbacks resolve in priority order** (handover → main menu → home tile →
-  cross-flow jump → active flow → prefix fallback across all flows → AI). The
-  prefix fallback is what makes a chip tapped after the flow's TTL expired still
-  work: `rx_*` finds the pharmacy flow even with no active flow record.
+- **Postbacks resolve in priority order** (handover → Reset postbacks (§2.3) →
+  secure-upload switch → home tile → room pick, booking confirmation, offer and
+  rebook-hotel handoffs (§4.16, §4.16a) → cross-flow jump → active flow → fallback across every flow the brand
+  owns → the brand's assistant or Home_Menu, §2.4). The
+  fallback is what makes a chip tapped after the flow's TTL expired still
+  work: `rx_*` finds the pharmacy flow even with no active flow record. It offers
+  the postback to every flow module the selected brand owns (`_fallback_flows`,
+  derived from `FLOW_MAP`), so a new flow is reachable without editing a list.
   **A tap on a native-action chip never reaches the AI.** Chips that show a map,
   add a calendar event, open a webview or dial run on the handset, and the phone
   still reports the tap to the topic. The chips the flows write are listed in
@@ -476,13 +508,20 @@ Reading it top to bottom:
   comes out unreserved, if the adapter stops recognizing the family (or starts
   recognizing a pattern instead of the fixed set), or if the prompt shows the
   model an action chip with a `postback`. (The routing diagram's last step,
-  "Bedrock assistant", applies to every other unclaimed tap.)
+  "Bedrock assistant", applies to every other unclaimed tap on a brand with an
+  assistant; elsewhere the tap gets the Home_Menu, §2.4.)
 - **Free text has its own ladder**: after the screens above, the deep-link
-  keyword and generic greetings reset to the welcome (below), an active
-  verification flow treats the text as a code, the AI use case examples pass it
-  to Bedrock, and otherwise a small keyword router catches "human/agent",
-  "refill", "appointment", "store", "verify", "find" before falling through to
-  the Benefits Q&A assistant. The router matches whole words (with the
+  keyword and generic greetings send the three-card Welcome_Intro (below), an
+  active verification flow treats the text as a code, the AI use case examples
+  pass it to Bedrock (in Room Booking a bare affirmative such as "yes, confirm
+  it" counts as the Confirm Booking tap, §4.16), an active Wellness Store re-shows its
+  catalog, an active deterministic flow with an
+  `on_freetext` hook may claim the text as a typed answer (§4.18), and otherwise a small keyword router
+  (`_INTENTS`) catches "human/agent", "refill", "appointment", "store", "verify",
+  "find" before falling through to `_default_route`: the brand's
+  `defaultVignette` assistant (Benefits Q&A for AnyHealth, the brand assistant for
+  the others, §4.18) or, when the brand has none, the Home_Menu. An intent opens only a
+  vignette the brand owns; any other match is skipped (§2.4). The router matches whole words (with the
   inflections a member would type: "refills", "ordering", "doctors"), so "order"
   does not fire inside "disorder" nor "person" inside "personal".
 - **Every send goes through `common.send_rcs`**, the one place the Lambdas call
@@ -492,7 +531,9 @@ Reading it top to bottom:
   persisted — logs the outbound message, and sleeps 1s between messages in a
   multi-message reply so they arrive in order. AI replies (`send_ai_response`)
   and operator replies (`handle_push`) call `common.send_rcs` directly and log
-  the turn themselves, so they carry no TTL, fallback body, or redaction.
+  the turn themselves, so they carry no TTL, fallback body, or redaction. Both
+  `_send` and `send_ai_response` add the Start Over chip; operator replies do
+  not (§2.3).
 
 ### 2.1 Keywords, and where a keyword is answered
 
@@ -500,10 +541,10 @@ The first branch in `handle_freetext` is a keyword check that opens the welcome
 message. Two kinds of input reach it:
 
 - **The configured deep-link keyword** (`deepLinkKeyword` in `content/brand.md`,
-  default `Get started`) always resets to the welcome, even mid-flow. Somebody
+  default `Get started`) always sends the Welcome_Intro, even mid-flow. Somebody
   who scans the QR code is deliberately saying "start here", so abandoning an
   in-progress flow is the intent rather than a side effect.
-- **Generic greetings** (`hi`, `hello`, `start`, `demo`, …) only reset
+- **Generic greetings** (`hi`, `hello`, `start`, `demo`, …) only send it
   when no flow is active. Otherwise typing "hi" at the AI assistant would
   silently throw away the conversation. Matching is done on a normalized form —
   lowercased, punctuation and emoji stripped, whitespace collapsed — so
@@ -525,9 +566,9 @@ not register its deep-link keyword with the service: the member would get the
 fixed string and never see the welcome message.
 
 Handling the keyword here instead costs nothing but code, and buys the entire
-vocabulary back: the reply is the three-card welcome message (see §4.1),
-personalized with the recipient's name from the Recipients tab and recorded as
-the active flow.
+vocabulary back: the reply is the three-card Welcome_Intro (see §4.1), on the
+selected brand's card image and ending in its `homeMenu` tiles, and `welcome` is
+recorded as the active flow.
 
 **`STOP`, `HELP` and `UNSTOP` are the opposite case: the bot's code stays out of
 the reply on purpose, and the deploy registers the text instead.** Everything
@@ -685,6 +726,148 @@ Two things to know about it:
   invitation. Scan-to-start marketing demos that work for any passer-by are
   running a launched agent, usually behind an SMS short code.
 
+### 2.3 Conversation reset (Start Over)
+
+Every use case example of every brand ends in the same way out: a **Reset**,
+which forgets what the member chose in this session and lands on the selected
+brand's short Home_Menu card (§4.1). There is one function for it,
+`channel_adapter.reset_conversation`, and every entry point calls it.
+
+**Entry points.**
+
+- **The Start Over chip** (postback `reset_conversation`), which the send path
+  attaches to bot messages (below).
+- **Older ids still on a handset.** `RESET_POSTBACKS` also holds `home_menu`
+  (the retired Main Menu chip, which several flows still write and the send
+  path relabels), and `checkin_restart` and `offers_browse` (the per-flow Start
+  Over chips Express Check-In and Travel Offers used to send). `handle_postback`
+  checks this set right after the handover ids, before any home tile, active
+  flow or prefix fallback, so `checkin_restart` no longer restarts one flow.
+- **Typed words**: `menu`, `main menu`, `home`, `start over`, `reset`,
+  `restart` (`_MENU_ESCAPES`), as the whole message, ignoring case, punctuation
+  and a trailing "please". `_screen_freetext` checks them before LIVE mode,
+  sticky flows, the keyword router and the AI (§2).
+- **LIVE mode.** A Reset postback or a typed Reset word works while a human has
+  the thread; the Reset puts the conversation back in bot mode. `handover_end`
+  is separate: it returns to bot mode and sends the resolved card without
+  clearing anything.
+
+**What comes first.** Emergency wording, the service keywords (`STOP`, `HELP`,
+`UNSTOP` and registered keywords) and the opt-out check all run before the typed
+Reset words, so `stop` is never treated as a Reset and an opted-out member gets
+no Home_Menu. A tapped Reset chip meets the opt-out check first too, like every
+other turn. A greeting or the deep-link keyword is not a Reset: it sends the
+Welcome_Intro and clears nothing.
+
+**What a Reset does**, in order (`common.reset_session`, then
+`common.log_reset`, then `welcome.home_menu`):
+
+| Cleared | Kept on purpose |
+|---|---|
+| active flow (`FLOW#{hash}`/`ACTIVE`) | clocked-in shift (`SHIFT#{hash}`/`STATUS`): a record of a real-world action, not a conversation choice |
+| LIVE mode, set back to bot (`CONV#{hash}`/`STATE`) | the dashboard's latest photo (`CONV#{hash}`/`LATEST_MEDIA`) |
+| Room Booking's carded property, offer details, priced stay and offer id (`CONV#{hash}`/`BOOKING_CARDED`, `BOOKING_CONTEXT`, `BOOKING_QUOTE`, `BOOKING_OFFER`) | every transcript row (`CONV#{hash}`/`MSG#…`): nothing is deleted |
+| wellness-store cart, pending PTO request, pending shift swap | READY, PROCESSING and FAILED uploads |
+| one-time code (`OTP#{hash}`/`CODE`) | |
+| PENDING webview uploads (`UPLOAD#{hash}`) | |
+| AnyBuild flow state (`BUILD#{hash}`/`evidence`, `evidence_log`, `delivery`, `plan`, `ready`) | |
+
+Each clearing step runs in its own `try`. A failed step is logged by step name
+and error code only, the remaining steps still run, and the Home_Menu is still
+sent.
+
+**The memory cut.** The assistant's memory is the stored transcript: `invoke_ai`
+rebuilds its context from the latest `MSG#` rows. Clearing flow state alone
+would leave the model remembering the old booking, so `log_reset` writes a
+marker row into that same history: `direction: "event"`, `event_type:
+"CONVERSATION_RESET"`, with the ordinary 30-day conversation TTL and no update to
+the `META` row (a Reset is never the thread's "last message"). `invoke_ai` passes
+the fetched rows through `common.history_since_reset`, which keeps only the rows
+after the newest marker, before it picks the last 12 turns. The dashboard
+transcript is untouched and shows the marker with the other event rows.
+
+**Where the Start Over chip comes from.** Flows and the model do not add it; the
+send path does, through the pure `_attach_reset_chip`:
+
+- `_send` attaches it to the **last message of a batch only**, so a three-card
+  reply gets one chip, not three. A message with the private `_no_reset` key is
+  skipped: the Home_Menu and the Welcome_Intro's last card (they are where a
+  Reset lands), the live-agent "Connecting you" card and the live-mode nudge
+  card (their own chip is the way out). The fixed emergency reply keeps it.
+- `send_ai_response` attaches it to every AI reply, except a Room Booking reply
+  that a Room_Carousel follows (`reset_chip=False`): the carousel carries the chip
+  instead. The JSON contract no longer asks the model for a Main Menu chip.
+- Operator replies from the dashboard (`handle_push`) never get one.
+
+`_attach_reset_chip` removes every other reset-equivalent reply chip first: one
+whose postback is in `RESET_POSTBACKS`, or whose label is "Main Menu" or "Start
+Over" in any case. It does that at message level and on a rich card's own chips,
+and leaves carousel card chips alone. If the message is already at the
+11-suggestion limit (`suggestionsPerMessage` in `content/rcs-features.json`), it
+drops the last other chip to make room, then appends Start Over last. So a
+message always ends in exactly one Start Over chip, and a model that invents its
+own "Main Menu" chip cannot add a second one. A Main Menu chip on an earlier
+message of a multi-message batch is left as it is; it still resets when tapped.
+
+```mermaid
+flowchart TD
+  CHIP["tap reset_conversation (Start Over)"] --> R
+  OLD["tap home_menu / checkin_restart / offers_browse"] --> R
+  TYPED["typed menu, main menu, home, start over, reset, restart"] -->|"_screen_freetext, after emergency, service keywords, opt-out"| R
+  LIVE["any of these while LIVE"] --> R
+  R["reset_conversation"] --> S1["common.reset_session: clear flow, mode, booking, cart, PTO, swap, AnyBuild state, code, pending uploads"]
+  S1 --> S2["common.log_reset: CONVERSATION_RESET event row"]
+  S2 --> S3["welcome.home_menu: one card, brand card image, homeMenu tiles, no Start Over"]
+  S2 -.->|"newest marker"| AI["invoke_ai: history_since_reset keeps later turns only"]
+```
+
+### 2.4 Brand isolation: a deploy opens only its own vignettes
+
+One deploy is one brand, and the adapter never opens a vignette that belongs to
+another brand. Ownership is content: each brand's block in `content/brand.md`
+lists the vignette ids it owns in `vignettes`, and `common.UNIVERSAL_VIGNETTES`
+(`welcome` and `handover`) adds the two that every brand allows, because a Reset
+lands on the welcome and a handover can be asked for from anywhere.
+`common.vignette_allowed(vkey)` answers the one question every inbound path asks
+(the adapter's `_allowed` wraps it). A block with no `vignettes` list, from an
+older file, allows every vignette.
+
+| Inbound | Own vignette | Another brand's vignette |
+|---|---|---|
+| `Start: <vignette>` trigger | opens as before | Home_Menu, logged `FOREIGN TRIGGER` |
+| Home tile, cross-flow jump, Confirm Booking or Book This Stay chip | opens as before | Home_Menu, logged `FOREIGN TILE` |
+| Typed text matching an `_INTENTS` keyword | opens the intent's vignette | intent skipped; the next intent, then `_default_route` |
+| Typed text matching nothing | `_default_route`: the `defaultVignette` assistant, else the Home_Menu | not applicable |
+| Shared location | the active Delivery Location or Bag Tracking flow, else Find Care | Home_Menu, logged `FOREIGN LOCATION` |
+| A chip tapped with no active flow | answered by its own flow | never offered to the flow |
+
+The log line (`_foreign_to_menu`) names the vignette id and the brand, never the
+member's words. `defaultVignette` is `benefits_qa` for AnyHealth and the brand's
+own assistant for the others (§4.18). Room Booking can also be a default: it is
+then entered as its home tile enters it, with a clean booking session. A chip from a flow that has expired, or that a
+Reset cleared, is still answered by its own flow, because the postback fallback
+offers it to every flow the brand owns (§2). A tap no flow claims, other than a
+native-action chip, goes to `_last_resort`: the active vignette's assistant when
+it is an AI vignette the brand owns, else `_default_route`. No vignette is hard
+coded there, so a brand never gets another brand's assistant. The copy follows
+the same rule: `welcome._has_assistant()` lets the Home_Menu and the
+Welcome_Intro invite a question only when the brand's `defaultVignette` is an AI
+vignette it owns; otherwise they ask the member to pick a tile (§4.1).
+
+Each brand also carries its own sample member (`memberName`, `memberPlan`,
+`memberIdMasked`, `memberCity`), and `_member_ctx` puts that profile in the AI
+prompt, leaving out an empty field. A name set on the Recipients tab still takes
+the place of `memberName`. The top-level member keys remain as the fallback for
+an older block.
+
+`scripts/check-rcs-registry.py` keeps this honest. For every brand it checks that
+`vignettes` equals the dashboard catalog's brand tags (`VIGNETTES` in
+`lambda/dashboard_handler.py`), that every listed id is a `FLOW_MAP` key or an
+AI-driven vignette, that `defaultVignette` is empty or an AI-driven vignette the
+brand lists, that the four member fields are set in the brand's own block and
+name no other brand, that no grounding file names another brand, and that every
+`homeMenu` tile opens a vignette the brand owns.
+
 ---
 
 ## 3. Rich media — two ingress paths
@@ -760,16 +943,20 @@ test deployment (see *Three details* under §4.2).
 
 ## 4. Use case example flows
 
-Twenty use case examples — thirteen member-facing and seven internal — all
-triggerable from the dashboard and all drivable from the phone. The dashboard's
-Interactive Demos tab shows them as one flat list; three of the internal
+In this version, forty-one use case examples across the brands — thirty customer-facing
+and eleven internal — all triggerable from the dashboard and all drivable from the
+phone. The dashboard's Interactive Demos tab shows the selected brand's examples
+as one flat list; three of the internal
 entries are operator tooling that lives in the Settings tab instead of the list:
 the Camera & Mic Probe diagnostic and the two IVS webview experiments (§4.15),
-under a **Diagnostics & experiments** section. The four remaining internal
-entries are staff self-service (clock in/out, schedule, PTO, shift swap). The
+under a **Diagnostics & experiments** section. The eight remaining internal
+entries are staff self-service (clock in/out, schedule, PTO, shift swap), AnyHR's
+HR assistant, and AnyBuild's Field Schedule, Job Readiness (§4.17) and jobsite
+assistant (§4.18). The
 flow modules live in [`lambda/flows/`](../lambda/flows/) and are registered in
-`FLOW_MAP`; `benefits_qa` and `find_care` have no module because they're handled
-by the Bedrock assistant.
+`FLOW_MAP`; `benefits_qa`, `find_care`, `room_booking` and the four brand
+assistants (§4.18) have no module because they're handled by the Bedrock
+assistant.
 
 Each flow module exposes the same three entry points — `on_start` (member
 arrived via the welcome, a greeting, or the deep link), `on_trigger` (operator
@@ -778,12 +965,41 @@ why any use case example can be entered from either direction.
 
 ### 4.1 Welcome — the educational front door
 
+`flows/welcome.py` builds two different messages, both from the selected
+brand's block in `content/brand.md`:
+
+- the **Welcome_Intro** (`on_start` / `on_trigger`), three cards sent on first
+  contact: `Start: Welcome`, the deep-link keyword, a bare greeting with no
+  active flow, the unknown-trigger fallback and the dashboard's Device preview;
+- the **Home_Menu** (`welcome.home_menu`), one short card, which is where a
+  Reset lands (§2.3).
+
+Every card of both uses the selected brand's own card image (`cardImage`, for
+example `media/anytravel/card.png`), falling back to its `bannerImage`; a brand
+with neither gets cards without media (`common.brand_card_media()`). There is no
+shared hero image. The card image is a separate 1440×480 (3:1) picture with the
+wordmark kept to the middle 960 px, because a handset crops card media to its
+centre and an iPhone showed it narrower than 3:1, which cut the sides of the
+left-anchored banner. The banner stays left-anchored for the Android agent
+profile, where the circular logo covers its bottom-centre. The navigation tiles of both come from the
+brand's `homeMenu` list (`label` and `postback` per tile, at most ten, read by
+`common.home_menu()`), so adding, renaming or removing a tile is a content
+edit. The postbacks are existing `home_*` ids that `handle_postback` maps to a
+flow. `scripts/check-rcs-registry.py` checks every brand's `homeMenu`: present,
+at most ten entries, labels within the suggestion text limit, every postback
+present as a string literal in `channel_adapter.py`, and every tile opening a
+vignette the brand owns (§2.4).
+
 The first message a newly verified tester sees is not a menu of every use case example;
-it is a short lesson about the channel itself. `flows/welcome.py` sends **three
+it is a short lesson about the channel itself. The Welcome_Intro is **three
 standalone `RichCard` messages**, delivered ~1s apart by `_send`:
 
-1. **What this is** — that the thread is an AWS End User Messaging RCS demo, and
-   what RCS adds over SMS (branded cards, images, chips, native actions).
+1. **What this is** — one short paragraph (200 characters or fewer with the
+   brand name, so the banner, text and chips fit one screen): the thread is an
+   AWS End User Messaging RCS demo of the selected fictitious brand, with no
+   real data, and RCS brings branded cards, images and reply chips to Messages.
+   The brand's `lineOfBusiness` line is on the Home_Menu, not here. Its two
+   card-level chips are the first two `homeMenu` tiles.
 2. **Verified brand, opt-in/opt-out** — how registration gives the agent the
    verified identity shown in the thread header, and that the member controls
    whether they are in the conversation: texting `STOP` opts out, and End User
@@ -792,8 +1008,9 @@ standalone `RichCard` messages**, delivered ~1s apart by `_send`:
    §2.1).
 3. **SMS fallback** — what per-message fallback does, worded from
    `common.sms_fallback_active()` so it states truthfully whether *this*
-   deployment has it enabled, followed by a compact row of message-level `Reply`
-   chips (`home_*` postbacks) for self-navigation.
+   deployment has it enabled, followed by the brand's `homeMenu` tiles as
+   message-level `Reply` chips for self-navigation. This card carries
+   `_no_reset`, so it has no Start Over chip.
 
 Standalone cards are a deliberate choice over a carousel. On the iOS and Android
 handsets tried, the cards of a multi-card carousel arrived in a different order
@@ -805,14 +1022,23 @@ swipeable product catalog is the actual lesson, still uses a carousel**
 The old "twelve-tile menu carousel" is gone: pushing a specific use case example to a
 device during a demo is the dashboard's job (the audience usually watches the
 web app and the handset side by side), and the welcome's compact chip row plus
-each leaf flow's `Main Menu` chip keep the phone able to self-navigate without a
-wall of cards.
+the Start Over chip on every bot message (§2.3) keep the phone able to
+self-navigate without a wall of cards.
+
+The diagram shows AnyHealth's eight tiles; the other brands' tiles are AnyTravel's
+Book a Room, Express Check-In, Travel Offers (§4.16), Flight Check-In, Flight Status,
+Rebook a Flight and Track My Bag (§4.16a) and Ask About My Trip, AnyWealth's Fraud
+Alert (`home_fraud`), Loan Agreement (`home_loan`, §4.13a) and Ask About My Account,
+AnyHR's Clock In / Out, My Schedule, Request PTO and Swap a Shift (§4.8 to §4.11) and
+Ask HR, and AnyBuild's ten tiles, one per example (§4.17) plus Ask About the Site. The
+four Ask tiles open the brand assistants (§4.18).
 
 ```mermaid
 flowchart LR
-  T["Start: Welcome<br/>(greeting, deep link,<br/>or 'Main Menu' chip)"] --> C1[Card 1 — What RCS is]
+  T["Start: Welcome<br/>(greeting or deep link)"] --> C1[Card 1 — What RCS is]
   T --> C2[Card 2 — Verified brand, opt-in/out]
-  T --> C3[Card 3 — SMS fallback + nav chips]
+  T --> C3[Card 3 — SMS fallback + homeMenu chips]
+  R["Reset (Start Over, typed reset word)"] --> HM[Home_Menu card — brand name, line of business, homeMenu chips]
   C3 --> RX[home_rx → Rx Refill]
   C3 --> AP[home_appt → Appointment]
   C3 --> BE["home_benefits → Benefits Q&A · AI"]
@@ -821,10 +1047,19 @@ flowchart LR
   C3 --> VE[home_verify → Verification]
   C3 --> PH[home_photo → Classify a Photo]
   C3 --> UP[home_upload → Secure Upload]
+  HM -.->|same tiles| C3
 ```
 
-Every leaf flow offers a `Main Menu` chip back to this welcome, so the demo
-never dead-ends.
+**The Home_Menu** is deliberately brief, because a member who tapped Start Over
+has already seen the lesson: one rich card titled with the brand name, its
+`lineOfBusiness` line and "Pick one below, or ask me a question.", the brand's
+card image, and the `homeMenu` tiles as message-level chips. The invitation to ask a
+question appears only when the brand has a default assistant
+(`welcome._has_assistant()`, §2.4), which every brand in this version has; a brand
+with an empty `defaultVignette` reads "Pick one below." instead, and the
+Welcome_Intro's closing line follows the same rule. It has no card-level
+chips and no Start Over chip (`_no_reset`). Every leaf flow and AI reply ends in
+a Start Over chip back to it, so the demo never dead-ends.
 
 ### 4.2 Pharmacy Rx refill
 
@@ -934,8 +1169,8 @@ into the same scenario:
   reschedule or cancel are all acceptable answers.
 - **`appt_reschedule`** — the clinic is *moving* the visit because the provider
   became unavailable. The member didn't ask for this and the original slot no
-  longer exists, so the message opens straight into a required choice. It's the
-  demo's second event-driven send (with `rx_refill`).
+  longer exists, so the message opens straight into a required choice. It is an
+  event-driven send, like `rx_refill`.
 
 That difference is why `_reschedule_options()` takes `clinic_initiated`. The
 slot chips are identical either way; only the opening line changes, and it has
@@ -962,6 +1197,15 @@ flowchart TD
 
 The pre-visit webview is `TALL` rather than `HALF` because it's a form, not a
 detail pane — the two view modes are worth demonstrating side by side.
+
+**Dates are relative to today.** The visit and every slot are offsets in days
+from the UTC date (`_REMINDER_VISIT`, `_SLOT_PLAN`), so they are always
+upcoming: the visit is three days out at 9:30 AM, the three slot chips four,
+seven and nine days out, and More Options lists three more (ten, eleven and
+fourteen days out), each with its own chip (`appt_slot_1` to `appt_slot_6`). A
+slot's chip label, the confirmation text and its calendar event all come from
+one `_slot(n)` entry, and the chip id carries the slot number, never a date, so
+a tap after midnight still means the same slot.
 
 ### 4.4 Verification code (`TimeToLive`)
 
@@ -999,14 +1243,15 @@ four for the member to act on whatever arrives. The short window is also what
 makes `RCS_TTL_EXPIRED` observable in a demo — you can watch the event fire
 inside a minute instead of waiting out a realistic window.
 
-**And only this use case example sets one.** `_ttl` is deliberately per-message rather
-than a stack-wide default, so nineteen of the twenty use case examples send with no
-`TimeToLive` at all. A global default would be a more convenient test harness —
+**And only the time-critical use case examples set one.** `_ttl` is deliberately
+per-message rather than a stack-wide default, so thirty-eight of the forty-one use
+case examples send with no `TimeToLive` at all; the other two that set it are
+AnyWealth's fraud alert, which also carries an expiring code, and AnyTravel's flight status alert (§4.16a), where a gate change read late is worse than none. A global default would be a more convenient test harness —
 any use case example could then be used to force an expiry — but it would misrepresent
 the API. `TimeToLive` is a deliberate per-message choice about whether a late
 delivery is worse than no delivery, and that is true of a one-time code and false
 of an appointment reminder or a catalog carousel, which are all better late than
-never. Keeping it on the one use case example that teaches expiry is the honest default;
+never. Keeping it on the messages that carry a code is the honest default;
 a reader who wants it everywhere can see exactly where to add it.
 
 ### 4.5 Wellness store (conversational cart)
@@ -1022,7 +1267,7 @@ flowchart TD
   C -->|store_cart| V
   V -->|store_browse| C
   V -->|store_clear| E[Empty cart → Browse Store]
-  V -->|store_checkout| O[Order confirmation → Main Menu]
+  V -->|store_checkout| O[Order confirmation → Start Over]
 ```
 
 An empty cart renders a different card than a populated one, and free text while
@@ -1031,7 +1276,8 @@ AI assistant.
 
 ### 4.6 Benefits Q&A and Find Care (AI)
 
-The two `AI_DRIVEN_VIGNETTES`. No flow module — the adapter calls Bedrock
+AnyHealth's two `AI_DRIVEN_VIGNETTES`, of seven: AnyTravel's Room Booking is in
+§4.16, and the four brand assistants are in §4.18. No flow module — the adapter calls Bedrock
 Converse with the relevant `content/*.md` as grounding and asks for a JSON
 contract so the model's answer can be rendered as RCS rather than as a wall of
 text.
@@ -1041,15 +1287,20 @@ flowchart TD
   Q[Member question<br/>free text or home_benefits / home_find_care] --> R{active flow?}
   R -->|benefits_qa| B["Bedrock Converse<br/>grounded on content/benefits.md"]
   R -->|find_care| F["Bedrock Converse<br/>grounded on content/providers.md"]
-  R -->|no active flow, no keyword match| B
+  R -->|"no active flow, no keyword match (AnyHealth defaultVignette)"| B
   B --> J[JSON contract → text + suggestion chips]
   F --> J
   J --> S[SendRcsMessage]
   J -.->|malformed / error| FB[Plain-text fallback reply]
 ```
 
-Because unmatched free text defaults to the Benefits assistant, the demo always
-has something sensible to say — there is no "I didn't understand that" state.
+Because unmatched free text on AnyHealth defaults to the Benefits assistant (its
+`defaultVignette`), the demo always has something sensible to say — there is no
+"I didn't understand that" state. The other brands default to their own assistant
+(§4.18): AnyTravel's Trip Assistant, AnyWealth's account assistant, AnyHR's HR
+assistant and AnyBuild's jobsite assistant. A brand whose `defaultVignette` is not
+an AI vignette answers with its Home_Menu (§2.4). A brand that does not own Find
+Care answers a shared location with its Home_Menu.
 
 **Find Care also demonstrates `RequestLocation`.** Rule 7 of the find-care
 system prompt tells the model to offer a single `share_location` suggestion
@@ -1081,14 +1332,14 @@ sequenceDiagram
   participant O as Operator (2-way Conversations tab)
   M->>A: "I want to talk to a human"  (or handover_start)
   A->>D: CONV#{hash}/STATE = LIVE
-  A->>M: "Connecting you to a care advocate" + Back to Assistant chip
+  A->>M: "Connecting you to a care advocate" (the brand's liveAgentRole) + Back to Assistant chip, no Start Over
   M->>A: describes the problem
   A->>D: log inbound only — bot stays silent
   O->>A: POST /api/reply (x-api-key) → async Invoke
   A->>M: SendRcsMessage(operator's text)
   M->>A: taps "Back to Assistant" (handover_end)
   A->>D: CONV#{hash}/STATE = bot
-  A->>M: Resolved card → Main Menu
+  A->>M: Resolved card → Start Over
 ```
 
 The operator never calls `SendRcsMessage` directly — the dashboard invokes the
@@ -1096,15 +1347,19 @@ channel adapter, so human replies are constructed and logged by exactly the same
 code as bot replies and appear in the same transcript.
 
 Two typed inputs still get a bot answer while the thread is LIVE, both screened
-ahead of the LIVE gate (§2): `menu` (and `main menu`, `home`, `start over`)
-returns the member to the assistant and sends the welcome, and emergency wording
+ahead of the LIVE gate (§2): a Reset word (`menu`, `main menu`, `home`,
+`start over`, `reset` or `restart`) performs the Reset (§2.3), which returns the
+member to the assistant and sends the short Home_Menu, and emergency wording
 gets the fixed 911/988 reply. That reply is logged as an outbound turn labeled
 "Automatic safety reply", so the operator can tell it from a colleague's message,
 and the thread stays LIVE.
 
 ### 4.8 Internal staff: clock in / out
 
-Same channel, workforce use case, grounded on `content/workplace.md`.
+Same channel, workforce use case, grounded on `content/workplace.md`, which
+describes a fictitious retail employer (Maple Street Market) and one store
+associate. The shift summary webview shows the work location from that file
+(the `{{WORK_LOCATION}}` token), not a fixed place name.
 
 ```mermaid
 flowchart TD
@@ -1136,7 +1391,7 @@ belongs to another.
 
 ```mermaid
 flowchart TD
-  T["Start: PTO_Request<br/>or home_pto / sched_pto"] --> B[Balance card<br/>Jul 21–22 · Aug 4–8 · Sep 1]
+  T["Start: PTO_Request<br/>or home_pto / sched_pto"] --> B["Balance card<br/>today +14 for 2 days · +28 for 5 days · +42 for 1 day"]
   B -->|pto_range_a/b/c| P[Pending card<br/>Check Status · Cancel Request]
   P -->|pto_status| AP[Approved card]
   AP --> CE[CreateCalendarEvent → time off]
@@ -1146,6 +1401,14 @@ flowchart TD
 
 `Check Status` flipping to approved is demo theater — there's no approver
 service — but it exercises the pending→resolved state transition in DynamoDB.
+
+The three ranges are offsets from today's UTC date (`_RANGE_PLAN`), so a request
+is always upcoming; the chip text, the pending text and the calendar event come
+from the same `_range()` entry, and the chip ids (`pto_range_a/b/c`) carry no
+date. My Schedule and Shift Swap work the same way: each shift in
+`content/workplace.md` has a `dayOffset`, and `common.shifts()` and
+`common.coworkers()` compute the day name, the date and the open-shift label when
+they render.
 
 ### 4.11 Internal staff: shift swap
 
@@ -1176,7 +1439,7 @@ sequenceDiagram
   participant S as S3
   participant A as Channel Adapter
   participant C as Media Convert
-  A->>M: Prompt card — "send any photo"<br/>+ Secure Upload Instead (webview) + Main Menu
+  A->>M: Prompt card — "send any photo" + Start Over
   M->>E: photo
   E->>S: PutObject inbound/rcs/...
   E->>A: SNS message with mediaStatus
@@ -1224,7 +1487,11 @@ the webview ever handling a phone number.
 
 ### 4.13a Loan Agreement — signable document in the webview
 
-The outbound counterpart to Secure Document Upload. There, the member sends a
+AnyWealth's use case example (home tile `home_loan`), and the outbound
+counterpart to AnyHealth's Secure Document Upload. AnyBuild's Agreement/Waiver
+(`agreement_waiver.py`, home tile `home_agreement`, §4.17) uses the same pattern
+with a generic agreement and waiver page, `webviews/agreement-waiver.html`; the
+signing mechanics are a copy of this page's. There, the member sends a
 document *in*; here, the business sends one *out* to be read and signed. Both
 make the same transport point: a sensitive document is kept off the RCS/carrier
 network by keeping it in a webview, so only the link rides the RCS channel.
@@ -1268,7 +1535,7 @@ sequenceDiagram
   participant K as Chime SDK Meetings
   participant M as Member (in-app webview)
   O->>G: POST /api/video/start {phone}   (x-api-key)
-  G->>D: mint visit token (30-min TTL), send invitation card
+  G->>D: mint visit token (30-min TTL); D invokes the channel adapter, which sends the invitation card
   D-->>O: {visit}  — the operator console holds the same token
   M->>G: GET /webview/video-visit?visit=…   (RCS chip, WEBVIEW FULL)
   M->>G: GET /api/video/join?visit=…&role=member
@@ -1339,7 +1606,7 @@ Two operational notes. `chime:CreateMeeting` is granted on `*` because the meeti
 does not exist yet, so there is no ARN to name; the other three actions could be
 scoped to `arn:aws:chime:<region>:<account>:meeting/*`, which is the same set, so
 the wildcard is honest rather than lax (see the comment in
-`cdk/lib/anyhealth-stack.ts`). And **Chime SDK Meetings is not available in every
+`cdk/lib/rcs-demo-stack.ts`). And **Chime SDK Meetings is not available in every
 Region** — the control-plane and media Regions are separate choices, both
 defaulting to the deploy Region, overridable through `CHIME_CONTROL_REGION` /
 `CHIME_MEDIA_REGION` on the dashboard Lambda.
@@ -1394,13 +1661,331 @@ affordance is a single "." that opens a modal revealing what the box is and a
 button to send it (`web/src/components/MysteryBoxModal.tsx`). The Camera & Mic
 Probe (above) shares the Settings section but is not a Mystery Box.
 
+### 4.16 AnyTravel hotel use case examples
+
+AnyTravel has three hotel use case examples (its four airline ones are in §4.16a), reached from its `homeMenu` tiles
+(`home_booking`, `home_checkin`, `home_offers`) or the dashboard triggers
+(`Start: Room_Booking`, `Start: Express_Checkin`, `Start: Travel_Offers`). No
+free-text intent words start them. AnyTravel's `defaultVignette` is its Trip
+Assistant (§4.18), so typed text that nothing else claims goes there, not to Room
+Booking (§2.4). All three read `content/hotels.md`
+(`properties`, `roomTypes`, `upgrades`, `offers`, and a prose body that grounds
+the assistant) through the hotel accessors in `common.py`. Those accessors return
+data only while `hotels.md` is in the selected brand's `groundingFiles`, so under
+any other brand they are empty, and the code carries no brand id. Hotel images
+live in `media/anytravel/hotels/`; room photos, two per room type, live in
+`media/anytravel/rooms/` and are named by `roomTypes[].photos`. The human on a live handover is the brand's
+`liveAgentRole` ("booking concierge"), which also labels operator replies sent
+with no explicit name.
+
+**Room Booking** (`room_booking`, AI-driven, no flow module). Every
+conversational turn goes through `channel_adapter._booking_reply`: `invoke_ai`
+with the booking prompt, the pure `room_booking_rooms.strip_room_chips`, then
+the pure `room_booking_cards.apply_property_card`, then `send_ai_response`. The
+property-card step does three things:
+
+- it drops every `dial` and `view_location` chip the model added;
+- it resolves the property from the **reply** (its title first, then title plus
+  text), not from the guest's input, so a tap with any chip id, typed text and
+  the offer handoff behave the same. A reply that names zero or several
+  properties is sent as it is, without media;
+- when exactly one property resolves and it has not been shown yet in this
+  booking session, it turns the reply into **one** Property_Card: a rich card
+  with the property's `photo` (or `image`), the reply's title and text, and an
+  **Open Map** `view_location` chip at the property's content coordinates first,
+  then the model's remaining chips (four at most). The id is kept in
+  `CONV#{hash}`/`BOOKING_CARDED` so the same property is not carded twice.
+
+**Room carousel and room detail** (`lambda/flows/room_booking_rooms.py`, pure).
+The booking prompt tells the model to offer room types as reply chips named
+exactly as in the rate table. When the reply's chips (`suggestions` and
+`message_suggestions`) name two or more room types, `strip_room_chips` removes
+them, before the property card is merged so its four-chip cap cannot cut other
+chips, and `_booking_reply` sends the reply followed by one `Carousel`
+message. It has one card per room type in `roomTypes` order: the room's first
+photo (`roomTypes[].photos[0]`), its name, and "Sleeps N · $R/night at
+<property>" using that property's standard `rates[room]`. The property is the
+recorded stay's, else the one already carded, else the one this reply names;
+with none, the description is "Sleeps N · <blurb>". Each card has a **Choose**
+chip with `PostbackData` `room_pick_<id>`. The carousel only displays the
+standard rate, and the quote still prices the stay. With fewer than two room
+chips, or no carousel possible, the reply is sent unchanged.
+Start Over appears once: the carousel is the last message of the turn, so `_send`
+gives it the chip at message level, and the reply before it goes out through
+`send_ai_response(..., reset_chip=False)`, which adds none and also removes any
+"Start Over" or "Main Menu" chip the model wrote. When no carousel follows, the
+reply keeps the usual single Start Over chip (§2.3).
+A `room_pick_<id>` tap is handled in `handle_postback` before the active-flow
+routing: an unknown id, or a brand without Room Booking, gets the Home_Menu;
+otherwise it activates `room_booking` if needed and runs a booking turn as
+"I'd like the <room>.". Unless that turn sent a Property_Card, the reply becomes
+a rich card with the room's second photo (`photos[1]`), titled with the room name
+when the model gave no title. `_turn_text` shows the assistant the tap as "Choose <room name>", since
+every Choose chip shares one label.
+
+A Confirm Booking tap (`booking_confirm`, or an id the model is known to invent
+for it, `BOOKING_CONFIRM_ALIASES`) is routed to one confirmation prompt that asks
+for a single "Booking Confirmed!" rich card with Add to Calendar, View on Map and
+a Call action; it does not go through `apply_property_card`. A typed reply works
+the same: in `handle_freetext`, when the newest outbound message after the last
+Reset carries a Confirm Booking chip (`_offers_confirm`) and the whole message is
+a plain affirmative such as `yes`, `confirm it` or `book it`
+(`_is_typed_confirmation`; anything else, such as "yes but three nights", is
+not), the text is handled as the `booking_confirm` tap.
+
+**Deterministic pricing.** The model identifies the stay; it does not price it.
+The booking prompt includes a rate table generated from `properties[].rates`
+(`room_booking_quote.rate_table_text`), and whenever the property, room, dates
+and guest count are all known the model adds a `quote` object
+(`property_id`, `room_id`, ISO `check_in` / `check_out`, `guests`) to its JSON.
+`_booking_reply` removes `quote` from the reply and passes it to
+`room_booking_quote.price_stay`, which checks it against content (known property
+and room, a future check-in, at most 30 nights, guests within the room's
+`sleeps`) and prices it from `properties[].rates`. An accepted stay is stored as
+`CONV#{hash}`/`BOOKING_QUOTE` and the reply's text is replaced by
+`summary_text(stay)`; a rejected quote leaves the reply as the model wrote it and
+stores nothing. A Confirm Booking tap or typed confirmation then builds the
+"Booking Confirmed!" card in code from the stored stay (`confirmation_card`:
+same money formatter, Add to Calendar at the content `checkInTime` /
+`checkOutTime`, View on Map, Call), with no model call; the reference is minted
+once and stored, so a second confirm repeats it. Only with no stored stay does
+the confirmation prompt above run. A member rate applies only to a stay started
+from a Travel Offer: the handoff stores the offer id as
+`CONV#{hash}`/`BOOKING_OFFER`, and `price_stay` uses the offer's `memberRate`
+only for that offer's property and `roomId`; any other room is priced at the
+standard rate. Offer dates in `hotels.md` are fixed, so `offer_dates` rolls them
+forward by whole years until check-in is not in the past, for both the handoff
+and the rate table. `home_booking`, `Start: Room_Booking` and the offer handoff
+clear `BOOKING_QUOTE`; a Reset deletes `BOOKING_QUOTE` and `BOOKING_OFFER` with
+`BOOKING_CONTEXT` (§2.3).
+
+The assistant sees what the guest saw. An outbound row's `body` is only a
+summary such as `[Card: <title>]`, so `invoke_ai` rebuilds each earlier turn with
+`_turn_text` from the stored `rcs_content`: text body, card title and
+description, carousel cards, and an "Options offered:" list of chip labels, each
+turn capped at 1,500 characters. An inbound `[Tap] <postback>` row becomes
+`Tapped "<label>"` when the postback matches a chip on the previous outbound
+message. This applies to every AI use case example, after the Reset cut and
+within the 12-turn window (§2.3).
+
+**Express Check-In** (`express_checkin`, deterministic, postback prefix
+`checkin_`). An event-driven reminder card for the first property, on the
+brand's card image (the same `common.brand_card_media()` as the welcome cards, so
+not a property photo), with Express
+Check-In and Change Arrival Time chips and a Get Directions `ShowLocation`. Express
+Check-In lists every upgrade in `upgrades` as its own chip (up to ten, one under
+the message limit, which leaves room for Start Over); picking one returns a
+"You're checked in" card with an **Open Door** `WEBVIEW` digital key
+(`checkin_key_wv`) and a Hotel Map chip. Both action ids are in
+`ACTION_ONLY_POSTBACKS`. The check-in and checkout times in the texts come from
+`checkInTime` and `checkOutTime` in `content/hotels.md` (`common.hotel_times()`,
+shown as 12-hour times), and so do the arrival windows. Open Door opens
+`/webview/digital-key?room=…&property=…` (`TALL`), served from
+`lambda/webviews/digital-key.html`: the brand's name and accent color, the
+property and room written as text (never as markup), a "Key active" state and a
+note that it is a demo key that opens no real door.
+
+**Travel Offers** (`travel_offers`, deterministic, postback prefix `offers_`). A
+short welcome text (`offersIntro` in `content/hotels.md`, with `{brand}` replaced
+by the brand name, read by `common.offers_intro()`) followed by a carousel of the
+`offers` (two to ten cards; fewer than two degrades to a single text message
+instead of both). The welcome carries no chips, so Start Over lands on the
+carousel. Each card tying an event to a property, a member rate and a perk, with one
+**Book This Stay** chip (`offers_book_<id>`). `handle_postback` intercepts that
+postback before the flow sees it: an unknown id gets "that offer is no longer
+available"; a known one starts Room Booking with the offer's property, dates,
+rate and perk as given. Those details are also stored as
+`CONV#{hash}`/`BOOKING_CONTEXT` (flow TTL), and the booking prompt lists them as
+already chosen on every later turn, so the assistant does not ask for the dates
+again. `home_booking` and `Start: Room_Booking` clear `BOOKING_CARDED` and
+`BOOKING_CONTEXT`; a Reset deletes both (§2.3).
+
+```mermaid
+flowchart TD
+  HB["home_booking / Start: Room_Booking"] --> BR["_booking_reply"]
+  TAP["chip tap while room_booking"] --> BR
+  TX["typed text while room_booking"] --> TC{"plain yes and latest message offers Confirm Booking?"}
+  TC -->|no| BR
+  TC -->|yes| BC["booking_confirm: Booking Confirmed card"]
+  CB["tap Confirm Booking"] --> BC
+  BR --> AI["invoke_ai room_booking"] --> SR["strip_room_chips"] --> AP["apply_property_card"]
+  AP -->|"one new property"| PC["Property_Card: photo + Open Map"]
+  AP -->|"none, several or already carded"| PL["reply without dial and map chips"]
+  SR -->|"two or more room chips"| RC["Room carousel: photo 1, rate, Choose"]
+  RC -->|"room_pick_id"| BR
+  BR -->|"picked room, no Property_Card"| RD["Room detail card: photo 2"]
+  HO["home_offers"] --> OC["Travel Offers carousel"]
+  OC -->|"offers_book_id"| HF["offer handoff: BOOKING_CONTEXT"]
+  HF --> BR
+  HC["home_checkin"] --> RM["check-in reminder"] -->|checkin_start| UP["one chip per upgrade"] -->|"checkin_up_id"| DK["digital key card: Open Door webview /webview/digital-key"]
+```
+
+### 4.16a AnyTravel airline use case examples
+
+AnyTravel also flies, under the same brand: there is no airline sub-brand, so the
+handset shows one verified sender for the whole trip. Four deterministic use case
+examples are grounded on `content/flights.md` (the traveler's next flight, seats,
+a gate change, a cancellation with rebooking options, and a delayed bag), read
+through the guarded flight accessors in `common.py`. Their tiles are
+`home_flight_checkin`, `home_flight_status`, `home_rebooking` and `home_bags`,
+and their dashboard triggers `Start: Flight_Checkin`, `Start: Flight_Status`,
+`Start: Flight_Rebooking` and `Start: Bag_Tracking`. Times in `flights.md` are
+local to each airport, and every airport carries its IANA time zone, so the
+calendar events land at the right instant; the dates are day offsets like the
+rest of the catalog.
+
+- **Flight Check-In** (`flight_checkin.py`, prefix `board_`): a check-in
+  reminder card the day before departure, an optional seat choice from
+  `seatOptions`, then a checked-in card with a **Boarding Pass** chip that opens
+  `webviews/boarding-pass.html` (labelled as a sample, with a barcode-like
+  pattern that does not scan) and an **Add to Calendar** chip for the flight.
+- **Flight Status Alert** (`flight_status.py`, prefix `fstatus_`): a gate change
+  and delay card with **Airport Map** (`ShowLocation`) and **Call Traveler
+  Services** (`DialPhone`). It carries a 300-second `TimeToLive` (§4.4): a gate
+  change read after boarding has started is worse than useless, so a late RCS
+  delivery gives way to the SMS fallback when one is configured.
+- **Disruption Rebooking** (`flight_rebooking.py`, prefix `rebook_`): a
+  cancellation notice, then a carousel of the next flights; one tap rebooks and
+  confirms with **Add to Calendar**. An option that leaves tomorrow adds **Book a
+  Hotel Tonight**, which `channel_adapter.handle_postback` intercepts
+  (`rebook_hotel`, like `offers_book_*` in §4.16) to open Room Booking with the
+  airport hotel (`overnightPropertyId`) and tonight's dates already chosen.
+- **Bag Tracking** (`bag_tracking.py`, prefix `bag_`): a delayed-bag card with
+  **Deliver to My Hotel**, **Share Delivery Spot** (`RequestLocation`) and **Call
+  Baggage Service**. A location shared while this example is the active flow is
+  routed to it by `handle_location`, the same way as AnyBuild's Delivery
+  Location (§4.17), and becomes the delivery address.
+
+The flight data is also a grounding file for AnyTravel's two assistants. Room
+Booking leaves flight questions to the Trip Assistant (§4.18), which answers
+them from the same file.
+
+Disruption Rebooking and Bag Tracking also read a typed answer (§4.18): "I need
+to land before noon" narrows the options carousel, and a typed street address
+schedules the bag delivery.
+
+### 4.17 AnyBuild field-messaging use case examples
+
+AnyBuild is construction software that connects builders, suppliers and trades.
+The sample is one fictitious builder (Quillfeather Homes), one supplier
+(Brindlewood Supply Co.) and one jobsite. All nine examples are deterministic
+and transactional. Eight read `content/construction.md` through guarded
+accessors in `common.py` (`_construction()` returns `{}` unless the selected
+brand grounds on that file, like `_hotels()`); Agreement/Waiver reads none,
+because its sample document is fixed text in its webview page (§4.13a). Every `dayOffset` in the file
+resolves against today, so every upcoming date stays upcoming.
+
+| Example | Module | Home tile | What it shows |
+|---|---|---|---|
+| Hello: Builder App, Hello: Supplier App | `hello_builder.py`, `hello_supplier.py` (shared `_hello.py`) | `home_hello_builder`, `home_hello_supplier` | A transactional welcome per app side: who is writing, what to expect, the STOP and HELP line, and chips into that side's examples |
+| Site Evidence | `site_evidence.py` | `home_evidence` | The sender picks inspection, work-ready or damaged delivery (`ev_kind_<id>`, a ticket is stored in `BUILD#{hash}`/`evidence`), then sends media. A photo is normalized and described by `media_convert`, and `handle_native_media_ready` calls `media_messages()` in place of the receipt card; a video goes through `handle_media`. A damaged delivery is routed to the supplier. Each item is also added to `BUILD#{hash}`/`evidence_log`, which keeps the latest ticket after Done, so `/api/media/latest` can return its items as a list for the dashboard card's preview (photos as thumbnails with their description; video and other files listed without a preview) |
+| Identity Capture | `identity_capture.py` | `home_idcap` | The card asks for the ID type (`idQuestion` in `construction.md`), and one `OpenUrl` webview chip per type answers it: a passport (front only) or a USA driver's license (front and back). `webviews/id-capture.html` walks through the one or two sides, uploads each by presigned PUT (the file never touches the carrier path) and shows what the document is, never the image. Each upload is filed with the use case, ID type, side and page visit (`UPLOAD#` record), and `/api/media/latest` returns the latest visit's sides as a list for the dashboard card's one- or two-image preview |
+| Arrival Alert | `arrival_alert.py` | `home_arrival` | An event-driven card ("truck entered the geofence") with Gate Is Open, Hold Delivery and Directions. The geofence is detected by the customer's system; the dashboard's Send button stands in for it (`geofence_trigger` in the feature registry) |
+| Delivery Location | `delivery_location.py` | `home_delivery` | The drop spot as a `ShowLocation` pin with a photo. Not Here and We Moved It send a `RequestLocation` chip; the inbound LOCATION reaches `handle_location`, which calls `location_update()` and stores the new pin in `BUILD#{hash}`/`delivery` |
+| Field Schedule | `field_schedule.py` | `home_plan` | Tomorrow's crew plan with Confirm, Can't Make It (with a reason), an `Add to Calendar` event and a roll call. The other crew members' answers are fixed in the content |
+| Job Readiness | `job_readiness.py` | `home_ready` | A dependency chain from content. Marking the first step done (`ready_done_<id>`) clears every step whose needs are now met and sends that crew a ready message to accept, re-date or push back. Pushing back reopens the earlier step, so the chain blocks again |
+| Agreement/Waiver | `agreement_waiver.py` | `home_agreement` | A card with a `Review & Sign` webview chip (`waiver_open`) that opens `webviews/agreement-waiver.html`: a sample three-page agreement and waiver (parties, scope, assumption of risk, waiver and release, responsibilities, term) to initial on each page and sign, with a signing receipt. The same pattern as AnyWealth's Loan Agreement (§4.13a) |
+
+Two limits are worth saying out loud in a demo. The service accepts inbound
+video (mp4, webm and others), but `media_convert` handles images only, so a
+video is receipted without a preview or a description, and
+`_media_received_card` no longer puts non-image files in a card's media slot.
+And Identity Capture only moves the image safely; nothing verifies the document.
+
+A Reset clears the five `BUILD#{hash}` states (`evidence`, `evidence_log`,
+`delivery`, `plan`, `ready`) along with the other per-session state (§2.3).
+
+### 4.18 Brand assistants and typed answers (AI)
+
+Every brand other than AnyHealth has one grounded assistant, and seven of the
+deterministic examples read a typed reply as well as a tap. Both use Amazon
+Bedrock and both keep every action in code.
+
+**The four assistants.** Each is its brand's `defaultVignette`, so typed text
+that no flow, keyword or intent claims goes to it, and each has its own Home_Menu
+tile. They are `AI_DRIVEN_VIGNETTES` with no flow module; `_ASSISTANTS` in
+`channel_adapter.py` holds each one's tile, first-turn instruction and rules.
+
+| Assistant | Brand | Tile | Trigger | Audience |
+|---|---|---|---|---|
+| Trip Assistant (`trip_assistant`) | AnyTravel | `home_ask_trip` | `Start: Trip_Assistant` | Customer-facing |
+| Account assistant (`account_assistant`) | AnyWealth | `home_ask_account` | `Start: Account_Assistant` | Customer-facing |
+| HR assistant (`hr_assistant`) | AnyHR | `home_ask_hr` | `Start: Hr_Assistant` | Internal |
+| Jobsite assistant (`jobsite_assistant`) | AnyBuild | `home_ask_site` | `Start: Jobsite_Assistant` | Internal |
+
+`_assistant_prompt` builds the system prompt from the brand grounding, the
+member context and the JSON contract shared with §4.6, plus a FACTS block and
+four rules:
+
+- **FACTS.** The model sees only the prose bodies of the `content/*.md` files,
+  while the data (flights, the flagged charge, shifts, the crew plan) is in their
+  frontmatter. `common.assistant_facts()` writes that data out as a short
+  plain-text block with every date resolved against today, so the assistant
+  quotes the same times and amounts the deterministic cards show.
+- **Answer, do not act.** When the user wants to do something, the assistant says
+  which feature does it and offers that feature's Home_Menu tile as a chip, copied
+  from the brand's `homeMenu`. The tap then opens the deterministic flow.
+- **Brand limits.** The account assistant never moves money, freezes a card,
+  repeats a card number, PIN or code, or says whether a charge is fraud. The HR
+  assistant approves nothing. The jobsite assistant tells anyone reporting an
+  injury to stop work and call 911. The Trip Assistant never states a time, gate
+  or price that is not in the FACTS.
+- **Short replies**, under 450 characters unless the user asks for detail.
+
+AnyTravel's Room Booking keeps its own tile (`home_booking`), the offers hand-off
+and `rebook_hotel` (§4.16, §4.16a). The Trip Assistant offers **Book a Room** for
+a hotel booking request.
+
+**Typed answers in deterministic flows.** A flow module may define
+`on_freetext(phone, phone_hash, text)`. `handle_freetext` calls the active flow's
+hook after the store check and before the intent keywords. The hook calls
+`common.ai_extract(task, text)`, which asks the model (temperature 0, at most 300
+tokens, the text capped at 600 characters) for one small JSON object. The code
+then checks every field and continues exactly as the matching chip would:
+
+- a valid answer returns the flow's own messages;
+- `{"relevant": false}` returns `None`, and the text goes on to the intents and
+  the brand assistant;
+- a model failure (`None`) re-shows the flow's chips with "I couldn't read that",
+  so the user can still tap. Site Evidence instead stores the note as typed.
+
+A hook that raises is logged (`FREETEXT HOOK <flow> failed`) and the text is
+routed as ordinary text.
+
+| Example | Typed answer | What the code checks |
+|---|---|---|
+| Disruption Rebooking | "I need to land before noon", "nonstop tomorrow" | `HH:MM` times, nonstop, today or tomorrow; the options are filtered in code, so only listed flights are offered |
+| Bag Tracking | "send it to my hotel", a street address | The address needs at least 8 characters, a digit and a letter |
+| PTO Request | "next Thursday and Friday for a wedding" | Dates from tomorrow, at most 30 days, within the balance, at most a year ahead; then submitted like a range chip |
+| Field Schedule | "can't make it, truck's in the shop", "I'll be there" | Confirm or decline; the reason is one of a fixed list, and the person's own words are kept as a note |
+| Job Readiness | "cabinets are done", "not level, try Monday", "Thursday works better" | Done, accept, new date or not ready; a date from tomorrow to 60 days out |
+| Site Evidence | A note on an open ticket | For a damaged delivery, a claim card with item, severity and a summary combining the note and the photo's description |
+| Delivery Location | "found it", "we moved it behind the garage" | Found and missing act as their chips; a typed spot becomes the drop label, and the card offers **Share New Location** to move the pin |
+
 ---
 
 ## 5. Dashboard
 
-The local Cloudscape app in [`web/`](../web/) has five tabs. Two behaviors are
-worth calling out because they're not obvious from the UI, plus one that is
-deliberately hard to miss:
+The local Cloudscape app in [`web/`](../web/) has five tabs. One dashboard on
+one port serves every brand you have wired up, and each brand is still its own
+stack with its own API URL and API key. The connection registry
+(`web/src/connections/registry.ts`) builds the list of available connections
+before the first request, from the Vite dev server's connection endpoint (the
+local store that `scripts/wire-dashboard-brand.mjs` writes plus any
+`web/.env.<id>` files, served to loopback clients only; a production build has
+no such lookup), from `VITE_API_URL` / `VITE_API_KEY` and `localStorage` as
+before, and from saves on the Settings tab. It holds the active brand and a
+generation counter that goes up on a switch. The brand on open follows
+`?brand=`, then the last selection, then the first brand in id order.
+`createApiClient(binding)` in `web/src/api.ts` builds a client bound to one
+connection, so a call carries that connection's URL and key and no other, and a
+response for a binding that is no longer active never settles.
+`session/BrandSession.tsx` is keyed by `${activeId}:${generation}`, so a switch
+remounts everything below the top navigation and all brand-scoped state starts
+from its first-load value.
+
+Two behaviors are worth calling out because they're not obvious from the UI,
+plus one that is deliberately hard to miss:
 
 - **Device preview** renders the exact RCS payload a use case example would send —
   cards, carousels, chips — with **zero side effects**. It calls
@@ -1430,12 +2015,12 @@ deliberately hard to miss:
   the modal unmounts the iframe and calls `/api/video/end` so a preview cannot
   leave a meeting billing behind it.
 
-- **Live-agent handover is escalated app-wide.** `App.tsx` polls `GET /api/mode`
-  for the targeted device every 5 seconds, and when it comes back `live` it
-  raises a full-bleed banner above the tab strip, flags the 2-way Conversations
-  tab label, and rewrites the browser tab title. The member gets **no** reply at
-  all while the conversation is in live mode, apart from an emergency message or
-  a typed `menu` — the bot has stopped answering and
+- **Live-agent handover is escalated app-wide.** `session/BrandSession.tsx` polls
+  `GET /api/mode` for the targeted device every 5 seconds, and when it comes back
+  `live` it raises a full-bleed banner (`HandoverBanner`) above the tab strip and
+  flags the 2-way Conversations tab label; `App.tsx` rewrites the browser tab title. The member gets **no** reply at
+  all while the conversation is in live mode, apart from an emergency message, a
+  typed Reset word or a tapped Start Over (§2.3) — the bot has stopped answering and
   `channel_adapter.process_inbound` drops every flow postback — so a handover
   the operator doesn't notice is indistinguishable from a broken demo. That poll
   is scoped to the *targeted* device; a handover on some other recipient still
@@ -1484,32 +2069,52 @@ often each item changes:
 
 ---
 
-## 6. Re-theming
+## 6. Brand selection and re-theming
 
-Nothing about the healthcare framing is structural. `content/brand.md` drives
-the brand name (and therefore the resource-name prefix and the stack name),
-colors, contact numbers, and the registration field values that `AGENTS.md`
-reads once, at agent setup; `benefits.md`, `providers.md`, `store.md`, and
-`workplace.md` supply the knowledge and catalogs the flows and the AI assistant
-read. `content/*.md` is parsed at synth and staged into the Lambda assets, so a
-content change plus `cdk deploy` reaches the Lambdas, the webviews, and the
-dashboard. It does **not** reach the registered agent identity (logo, banner,
-display name, colors, contact details): the stack has no registration resource
-(the dashboard Lambda only reads the registration, for `GET /api/agent-identity`),
-the registration was submitted during agent setup, and AWS notes that some brand
-assets cannot be changed after submission.
+The demo is a catalog of independent brands, and each stack stands up
+exactly one of them (deploy several brands as several stacks). `content/brand.md`'s frontmatter holds a `brands` map keyed by stable id
+(in this version `anyhealth`, `anytravel`, `anywealth`, `anyhr`, `anybuild`) plus a `defaultBrand` pointer; the
+brands are siblings, with no umbrella block, and adding a brand means adding a block. `-c brand=<id>` names the brand to
+deploy (default `defaultBrand`, `anyhealth`), and an unknown id stops synth,
+naming it, before anything is provisioned. The runtime learns the choice through
+a single `BRAND` env var the stack injects; the Lambdas' accessors resolve the
+selected brand's block, and the send path keeps using the one `RCS_AGENT_ID` /
+`CONFIG_SET_NAME` for that brand's agent and config set.
 
-Do not change `brandName` on an existing deployment. The stack id is
-`<prefix>-rcs-demo` (`cdk/bin/anyhealth.ts`), where the prefix is a slug of the
-brand name (`slugify` in `cdk/lib/config.ts`: lowercased, non-alphanumerics
-replaced by `-`, at most 20 characters). A change that alters the slug makes
-`cdk deploy` create a second stack beside the first, with its own table,
-buckets, KMS key, secret, and API, and both stacks' custom resources then manage
-the same agent: the new stack repoints the agent's two-way messaging at its own
-topic, so the old stack stops receiving inbound messages. Destroying the old stack
-afterward leaves the agent's two-way setting, its `UNSTOP` keyword and the old
-configuration set in place, because the wiring Lambda's delete handler sees that
-the agent now delivers to a different topic
-([SETUP.md](../SETUP.md#teardown)). To deploy under a different brand name, run
+Nothing about any brand's framing is structural. The selected brand's block in
+`content/brand.md` drives its brand name (and therefore the resource-name prefix
+and the stack name), colors, contact numbers, and the registration field values
+that `AGENTS.md` reads once, at agent setup. Each brand lists its own grounding
+files in `groundingFiles`: AnyHealth reads `benefits.md`, `providers.md`,
+`store.md`; AnyHR reads `workplace.md`; AnyTravel reads `hotels.md` and `flights.md`;
+AnyWealth reads `wealth.md`; AnyBuild reads `construction.md` — the knowledge and catalogs the flows and the AI assistant use.
+`content/*.md` is parsed at synth and staged into the Lambda assets, so a content
+change plus `cdk deploy -c brand=<id>` reaches the Lambdas, the webviews, and the
+dashboard for that brand. It does **not** reach the registered agent identity
+(logo, banner, display name, colors, contact details): the stack has no
+registration resource (the dashboard Lambda only reads the registration, for
+`GET /api/agent-identity`), the registration was submitted during agent setup,
+and AWS notes that some brand assets cannot be changed after submission.
+
+Each brand deploys as its own stack. The stack id is `<prefix>-rcs-demo`
+(`cdk/bin/anyhealth.ts`), where the prefix is a slug of the selected brand's name
+(`slugify` in `cdk/lib/config.ts`: lowercased, non-alphanumerics replaced by `-`,
+at most 20 characters). Selecting a different brand, or a `brandName` change that
+alters the slug, makes `cdk deploy` create a second stack beside the first, with
+its own table, buckets, KMS key, secret, and API, and both stacks' custom
+resources then manage their respective agents. Within one brand, if a rename
+alters the slug while reusing the same agent, the new stack repoints that agent's
+two-way messaging at its own topic, so the old stack stops receiving inbound
+messages; destroying the old stack afterward leaves the agent's two-way setting,
+its `UNSTOP` keyword and the old configuration set in place, because the wiring
+Lambda's delete handler sees that the agent now delivers to a different topic
+([SETUP.md](../SETUP.md#teardown)). To redeploy a brand under a changed name, run
 `cdk destroy` on the existing stack first. See the editing table in the
 [README](../README.md#editing-the-demo).
+
+Each block also says what the brand owns at runtime: the `vignettes` it opens and
+its `defaultVignette` assistant, its sample member (`memberName`, `memberPlan`,
+`memberIdMasked`, `memberCity`), and, through `contactPhoneLabel`, the text of its
+call chip (Call Member Services, Call Traveler Services, Call Account Services, Call
+People Team, Call Field Support). §2.4 has the routing rule and the registry checks that keep these
+in step with the dashboard catalog.

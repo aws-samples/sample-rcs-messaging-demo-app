@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{BRAND_NAME}} — Boarding Pass</title>
+<style>
+  :root { --accent: {{ACCENT}}; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1a1a1a; background: #eef2f5; }
+  header { background: var(--accent); color: #fff; padding: 18px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; font-size: 13px; }
+  main { padding: 16px; }
+  .pass { background: #fff; border-radius: 16px; box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 6px 20px rgba(0,0,0,.08); overflow: hidden; }
+  .route { display: flex; align-items: center; justify-content: space-between; padding: 20px 18px 8px; }
+  .code { font-size: 40px; font-weight: 800; letter-spacing: 1px; }
+  .plane { font-size: 26px; color: var(--accent); }
+  .city { padding: 0 18px; display: flex; justify-content: space-between; font-size: 12px; color: #4a5560; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 10px; padding: 18px; }
+  .grid div { min-width: 0; }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #6b7682; }
+  .value { margin-top: 3px; font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+  .tear { border-top: 2px dashed #d5dde4; margin: 0 14px; }
+  .bar { padding: 18px; text-align: center; }
+  .bar svg { width: 100%; max-width: 320px; height: 84px; }
+  .conf { margin-top: 6px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; letter-spacing: 2px; }
+  .note { color: #4a5560; font-size: 13px; margin: 14px 2px 0; }
+  .sample { display: inline-block; margin: 0 0 12px; padding: 4px 10px; border-radius: 999px; background: #fff7e8; border: 1px solid #f0d9a8; font-size: 12px; font-weight: 600; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>{{BRAND_NAME}}</h1>
+    <p>Boarding Pass</p>
+  </header>
+  <main>
+    <p class="sample">Sample, not a real boarding pass</p>
+    <div class="pass">
+      <div class="route">
+        <span class="code" id="origin">---</span>
+        <span class="plane" aria-hidden="true">&#x2708;</span>
+        <span class="code" id="dest">---</span>
+      </div>
+      <div class="city"><span id="flight">Flight</span><span id="date"></span></div>
+      <div class="grid">
+        <div><div class="label">Passenger</div><div class="value" id="name">Traveler</div></div>
+        <div><div class="label">Seat</div><div class="value" id="seat">-</div></div>
+        <div><div class="label">Group</div><div class="value" id="group">-</div></div>
+        <div><div class="label">Boards</div><div class="value" id="boarding">-</div></div>
+        <div><div class="label">Gate</div><div class="value" id="gate">-</div></div>
+        <div><div class="label">Terminal</div><div class="value" id="terminal">-</div></div>
+        <div><div class="label">Departs</div><div class="value" id="depart">-</div></div>
+      </div>
+      <div class="tear"></div>
+      <div class="bar">
+        <svg id="barcode" viewBox="0 0 320 84" role="img" aria-label="Sample barcode, not scannable"></svg>
+        <div class="conf" id="conf"></div>
+      </div>
+    </div>
+    <p class="note">This is a demo boarding pass opened inside the RCS conversation. It is not valid for travel, and the barcode does not scan.</p>
+  </main>
+<script>
+  (function () {
+    var MAX = 60;
+    var params = new URLSearchParams(location.search);
+    function clean(name) {
+      var v = (params.get(name) || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+      return v.length > MAX ? v.slice(0, MAX) : v;
+    }
+    // Text only: query-string values are untrusted and must never become markup.
+    ["origin", "dest", "flight", "date", "name", "seat", "group", "boarding", "gate", "terminal", "depart", "conf"]
+      .forEach(function (key) {
+        var v = clean(key);
+        if (!v) { return; }
+        var el = document.getElementById(key);
+        el.textContent = key === "flight" ? "Flight " + v : v;
+      });
+    // A barcode-like pattern drawn from the confirmation code and flight, so it
+    // looks the part without being a real, scannable code.
+    var seed = clean("conf") + clean("flight") + clean("seat");
+    var h = 2166136261;
+    for (var i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    var svg = document.getElementById("barcode");
+    var ns = "http://www.w3.org/2000/svg";
+    var x = 6;
+    while (x < 314) {
+      h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h >>>= 0;
+      var w = 1 + (h % 4);
+      if ((h >>> 4) % 3 !== 0) {
+        var r = document.createElementNS(ns, "rect");
+        r.setAttribute("x", x); r.setAttribute("y", 4);
+        r.setAttribute("width", w); r.setAttribute("height", 76);
+        r.setAttribute("fill", "#1a1a1a");
+        svg.appendChild(r);
+      }
+      x += w + 1 + ((h >>> 8) % 2);
+    }
+  })();
+</script>
+</body>
+</html>

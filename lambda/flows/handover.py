@@ -53,9 +53,9 @@ def escalate_card():
             "RichCard": {
                 "CardOrientation": "VERTICAL",
                 "CardContent": {
-                    "Title": "Connecting you to a care advocate",
+                    "Title": f"Connecting you to a {c.live_agent_role()}",
                     "Description": (
-                        f"A {c.brand_name()} care advocate is joining this chat. "
+                        f"A {c.brand_name()} {c.live_agent_role()} is joining this chat. "
                         "Go ahead and describe what you need — they'll reply right here."
                     ),
                     "Media": {"FileUrl": c.resolve_media("media/handover.png"), "Height": "MEDIUM"},
@@ -73,10 +73,13 @@ def escalate_card():
         # and an SMS reply would not arrive on that path at all. So this hands
         # them a phone number instead of inviting a reply into a dead channel.
         "_fallback_body": (
-            f"{c.brand_name()}: we couldn't open a rich chat with a care advocate "
-            f"on your device. Please call {c.member_services_phone()} and an "
-            "advocate will help you directly."
+            f"{c.brand_name()}: we couldn't open a rich chat with a {c.live_agent_role()} "
+            f"on your device. Please call {c.member_services_phone()} and a "
+            f"{c.live_agent_role()} will help you directly."
         ),
+        # A Reset would interrupt the handover it just started (R2.6); the card's
+        # own "Back to Assistant" chip is the way out. Popped by _send.
+        "_no_reset": True,
     }]
 
 
@@ -95,6 +98,9 @@ def stuck_nudge_card():
     handled the same as handover_end) so the member is never stuck looking
     at a dead button with no visible way back to the assistant."""
     return [{
-        "Content": {"TextMessage": {"Body": "A care advocate has this conversation right now, so that button isn't active. Type your question, or tap below to return to the assistant."}},
+        "Content": {"TextMessage": {"Body": f"A {c.live_agent_role()} has this conversation right now, so that button isn't active. Type your question, or tap below to return to the assistant."}},
         "Suggestions": [{"Reply": {"Text": "Back to Assistant", "PostbackData": "home_menu"}}],
+        # Sent while the thread is live (R2.6): its own chip is the way out, and
+        # Start Over would replace it (home_menu is a reset postback). Popped by _send.
+        "_no_reset": True,
     }]

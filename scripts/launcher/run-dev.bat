@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 rem ---------------------------------------------------------------------------
-rem AnyHealth local dashboard launcher (Windows).
+rem Demo local dashboard launcher (Windows).
 rem Starts the Vite dev server for web\ on the first free port and opens the
 rem default browser to it. Path-independent: locates the repo from this file.
 rem
@@ -75,7 +75,7 @@ if not "%NO_BROWSER%"=="1" (
   start "" /b cmd /c "timeout /t 4 >nul & start "" "%URL%""
 )
 
-echo AnyHealth dashboard starting on %URL%
+echo Demo dashboard starting on %URL%
 echo Press Ctrl-C to stop.
 echo.
 
